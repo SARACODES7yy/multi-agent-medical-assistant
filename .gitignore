@@ -192,3 +192,4 @@ _boot.log.*
 # scratch / throwaway scripts
 _trash/
 /_*.py
+npm-cache/
