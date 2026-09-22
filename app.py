@@ -143,7 +143,7 @@ class SpeechRequest(BaseModel):
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     """Serve the main HTML page"""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html", {"request": request})
 
 @app.get("/health")
 def health_check():
@@ -805,26 +805,26 @@ async def update_profile(request: Request, session_id: Optional[str] = Cookie(No
 def profile_page(request: Request, session_id: Optional[str] = Cookie(None)):
     payload = verify_session_cookie(session_id)
     if not payload:
-        return templates.TemplateResponse("login.html", {"request": request, "error": "Please log in"})
+        return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Please log in"})
     user = db.get_user(payload["user_id"])
     if not user or user["role"] != "patient":
-        return templates.TemplateResponse("dashboard.html", {"request": request, "role": user["role"], "name": (db.get_profile(user["id"]) or {}).get("name",""), "error": "Health profile is for patients"})
+        return templates.TemplateResponse(request, "dashboard.html", {"request": request, "role": user["role"], "name": (db.get_profile(user["id"]) or {}).get("name",""), "error": "Health profile is for patients"})
     profile = db.get_profile(user["id"]) or {}
-    return templates.TemplateResponse("profile.html", {"request": request, "role": user["role"], "name": profile.get("name",""), "profile": profile})
+    return templates.TemplateResponse(request, "profile.html", {"request": request, "role": user["role"], "name": profile.get("name",""), "profile": profile})
 
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request, session_id: Optional[str] = Cookie(None)):
     payload = verify_session_cookie(session_id)
     if not payload:
-        return templates.TemplateResponse("login.html", {"request": request, "error": "Please log in"})
+        return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Please log in"})
     user = db.get_user(payload["user_id"])
     profile = db.get_profile(user["id"]) or {}
     role = user["role"]
     if role == "patient":
-        return templates.TemplateResponse("dashboard.html", {"request": request, "role": role, "name": profile.get("name",""), "profile": profile})
+        return templates.TemplateResponse(request, "dashboard.html", {"request": request, "role": role, "name": profile.get("name",""), "profile": profile})
     # doctor/nurse: list their patients
     patients = db.get_doctor_instructions(user["id"])
-    return templates.TemplateResponse("dashboard.html", {"request": request, "role": role, "name": profile.get("name",""), "patients": patients})
+    return templates.TemplateResponse(request, "dashboard.html", {"request": request, "role": role, "name": profile.get("name",""), "patients": patients})
 
 @app.get("/home", response_class=HTMLResponse)
 def home_page(request: Request, session_id: Optional[str] = Cookie(None)):
@@ -838,12 +838,12 @@ def home_page(request: Request, session_id: Optional[str] = Cookie(None)):
     """
     payload = verify_session_cookie(session_id)
     if not payload:
-        return templates.TemplateResponse("login.html", {"request": request, "error": "Please log in"})
+        return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Please log in"})
     user = db.get_user(payload["user_id"])
     if not user:
-        return templates.TemplateResponse("login.html", {"request": request, "error": "Please log in"})
+        return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Please log in"})
     profile = db.get_profile(user["id"]) or {}
-    return templates.TemplateResponse("home.html", {
+    return templates.TemplateResponse(request, "home.html", {
         "request": request,
         "role": user["role"],
         "name": profile.get("name", ""),
@@ -852,11 +852,11 @@ def home_page(request: Request, session_id: Optional[str] = Cookie(None)):
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
+    return templates.TemplateResponse(request, "login.html", {"request": request})
 
 @app.get("/signup", response_class=HTMLResponse)
 def signup_page(request: Request):
-    return templates.TemplateResponse("signup.html", {"request": request})
+    return templates.TemplateResponse(request, "signup.html", {"request": request})
 
 @app.post("/validate")
 async def validate_medical_output(request: Request, response: Response, session_id: Optional[str] = Cookie(None)):
