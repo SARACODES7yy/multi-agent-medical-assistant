@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: medical-triage-assistant
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: ELEVEN_LABS_API_KEY
+        sync: false
+      - key: USE_SUPABASE
+        value: "false"
+      - key: PORT
+        value: "7860"

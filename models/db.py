@@ -505,11 +505,37 @@ class SupabaseDB(Database):
 
 def get_db() -> Database:
     if USE_SUPABASE:
-        return SupabaseDB()
-    return SQLiteDB()
+        db = SupabaseDB()
+    else:
+        db = SQLiteDB()
+    _seed_demo_user(db)
+    return db
 
 
 def init_db():
-    db = get_db()
-    logger.info(f"DB initialized: {'Supabase' if USE_SUPABASE else 'SQLite'}")
-    return db
+    return get_db()
+
+
+def _seed_demo_user(db):
+    """Idempotently create the demo doctor account if missing (e.g. ephemeral disk on free hosts)."""
+    email = os.getenv("DEMO_USER_EMAIL", "doctor@test.com")
+    password = os.getenv("DEMO_USER_PASSWORD", "doctor123")
+    try:
+        if db.get_user_by_email(email):
+            return
+        try:
+            from werkzeug.security import generate_password_hash
+            password_hash = generate_password_hash(password)
+        except Exception:
+            import hashlib
+            password_hash = f"plain:{hashlib.sha256(password.encode()).hexdigest()}"
+        user = db.create_user(str(uuid.uuid4()), email, password_hash, "doctor")
+        if user:
+            db.upsert_profile({
+                "user_id": user["id"], "name": "Dr. Demo",
+                "qualification": "MBBS", "gender": None, "blood_group": None,
+                "height": None, "weight": None, "blood_pressure": None,
+            })
+            logger.info("Seeded demo doctor account: %s", email)
+    except Exception as e:
+        logger.warning("Demo user seed skipped: %s", e)
