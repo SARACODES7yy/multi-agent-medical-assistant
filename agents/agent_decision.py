@@ -137,8 +137,10 @@ def create_agent_graph():
         elif isinstance(current_input, dict):
             input_text = current_input.get("text", "")
         
-        # Check input through guardrails if text is present
-        if input_text:
+        # Check input through guardrails if text is present (skip when an image is
+        # uploaded: the image-analysis agent has its own safety checks, and short
+        # descriptors like "What is this?" get falsely flagged by the LLM guardrails).
+        if input_text and not (isinstance(current_input, dict) and "image" in current_input):
             # Only guardrail the raw user question, not injected patient context
             check_target = input_text.split("[USER QUESTION]")[-1].strip() if "[USER QUESTION]" in input_text else input_text
             is_allowed, message = guardrails.check_input(check_target)
