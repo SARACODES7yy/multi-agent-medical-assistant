@@ -20,14 +20,16 @@ langgraph-checkpoint>=2.0.19
 langchain-text-splitters>=0.3.6
 
 # --- Google Gemini ---
+# Note: google-ai-generativelanguage version is intentionally NOT pinned here;
+# langchain-google-genai pulls its own compatible range (older 2.x pulls genai
+# <0.7.0, newer versions allow >=0.7.0), avoiding resolver conflicts.
 langchain-google-genai>=2.0.0,<3.0.0
-google-ai-generativelanguage>=0.7.0
 
 # --- Groq (primary LLM provider) ---
 langchain-groq>=0.3.0
-
-# --- OpenRouter (OpenAI-compatible fallback) ---
-langchain-openai>=1.0.0
+# Note: langchain-openai intentionally NOT included: it requires langchain-core>=1.x,
+# conflicting with the langchain 0.3.x ecosystem pinned in this project. OpenRouter
+# fallback stays off here; Groq is the primary provider.
 
 # --- Vector store (local Qdrant + hybrid search) ---
 qdrant-client>=1.13.5
