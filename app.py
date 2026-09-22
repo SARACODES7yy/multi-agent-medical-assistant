@@ -653,9 +653,10 @@ async def login(request: Request, response: Response):
     body = await request.json()
     email = body.get("email", "").strip().lower()
     password = body.get("password", "")
-    user, cookie = auth_manager.login(email, password)
-    if not user:
+    result = auth_manager.login(email, password)
+    if not result:
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    user, cookie = result
     response.set_cookie(key="session_id", value=cookie, max_age=86400*30)
     return {"status": "success", "user": {"id": user["id"], "email": user["email"], "role": user["role"]}}
 
