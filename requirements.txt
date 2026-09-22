@@ -23,6 +23,12 @@ langchain-text-splitters>=0.3.6
 langchain-google-genai>=2.0.0,<3.0.0
 google-ai-generativelanguage>=0.7.0
 
+# --- Groq (primary LLM provider) ---
+langchain-groq>=0.3.0
+
+# --- OpenRouter (OpenAI-compatible fallback) ---
+langchain-openai>=1.0.0
+
 # --- Vector store (local Qdrant + hybrid search) ---
 qdrant-client>=1.13.5
 fastembed>=0.6.0
