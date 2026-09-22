@@ -97,6 +97,7 @@ def get_embedding_model():
 
 
 def gemini_llm(temperature=0.1, **kw):
+    from langchain_google_genai import ChatGoogleGenerativeAI
     inner = ChatGoogleGenerativeAI(model=DEFAULT_LLM_MODEL, temperature=temperature, transport="rest", **kw)
     return inner.with_retry(retry_if_exception_type=(Exception,), stop_after_attempt=2)
 
