@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediAssist AI — Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script>(function(){try{var s=localStorage.getItem('theme');var m=window.matchMedia('(prefers-color-scheme: light)').matches;var t=s||(m?'light':'dark');document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body class="dash-page">
+    <div class="dash-wrapper">
+        <nav class="dash-nav">
+            <span class="dash-brand"><i class="fas fa-stethoscope"></i> MediAssist</span>
+            <span class="dash-user" id="dash-user-name"></span>
+            <button class="theme-toggle theme-toggle-sm" onclick="toggleTheme()" title="Toggle theme"><i class="theme-icon fas fa-moon"></i></button>
+            <a href="/profile" class="btn-outline btn-sm" id="nav-health-link" style="display:none;"><i class="fas fa-notes-medical me-1"></i>Health Profile</a>
+            <a href="/home" class="btn-outline btn-sm" id="nav-triage-link" style="display:none;"><i class="fas fa-clipboard-list me-1"></i>Triage</a>
+            <a href="/" class="btn-outline btn-sm"><i class="fas fa-comments me-1"></i>Chat</a>
+            <button class="btn-outline btn-sm" onclick="logout()">Logout</button>
+        </nav>
+
+        <div class="dash-body">
+            <div class="dash-hero">
+                <h1 id="dash-greeting">Welcome</h1>
+                <div class="patient-id-row">
+                    <span class="patient-id-label">Patient ID</span>
+                    <code id="dash-user-id" class="patient-id"></code>
+                    <button class="btn-outline btn-sm" onclick="copyId()">Copy</button>
+                </div>
+                <p class="patient-id-note">This unique ID identifies your medical records. Share it with your doctor to link consultations.</p>
+            </div>
+
+            <!-- Profile card (patient) -->
+            <div class="dash-card">
+                <div class="dash-card-head">
+                    <h3><i class="fas fa-notes-medical me-2"></i>Medical Profile</h3>
+                    <button class="btn-outline btn-sm" id="edit-profile-btn" onclick="toggleEdit()"><i class="fas fa-edit me-1"></i>Edit</button>
+                </div>
+                <div id="profile-content"></div>
+                <div id="profile-edit" style="display:none;">
+                    <div class="row">
+                        <div class="col">
+                            <div class="form-group"><label>Full Name</label><input id="pe-name"></div>
+                            <div class="form-group"><label>Date of Birth</label><input id="pe-dob" type="date"></div>
+                            <div class="form-group"><label>ID Type</label>
+                                <select id="pe-id-type"><option value="Aadhaar">Aadhaar</option><option value="Passport">Passport</option><option value="Driving License">Driving License</option><option value="Other">Other</option></select>
+                            </div>
+                            <div class="form-group"><label>ID Number</label><input id="pe-id-number"></div>
+                        </div>
+                        <div class="col">
+                            <div class="form-group"><label>Medical History</label><textarea id="pe-medical-history" rows="2"></textarea></div>
+                            <div class="form-group"><label>Allergies</label><input id="pe-allergies"></div>
+                            <div class="form-group"><label>Conditions</label><input id="pe-conditions"></div>
+                            <div class="form-group"><label>Treatments</label><input id="pe-treatments"></div>
+                        </div>
+                    </div>
+                    <div class="dash-card-actions">
+                        <button class="btn-primary" onclick="saveProfile()"><i class="fas fa-save me-2"></i>Save Profile</button>
+                        <span id="profile-status" style="margin-left:10px;font-size:13px;"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Preventive health card (patient) -->
+            <div class="dash-card" id="checkup-card" style="display:none;">
+                <div class="dash-card-head">
+                    <h3><i class="fas fa-heartbeat me-2"></i>Preventive Health</h3>
+                </div>
+                <div id="checkup-content"><p style="color:#8294a6;font-size:13px;">Loading...</p></div>
+            </div>
+
+            <!-- Doctor instructions -->
+            <div class="dash-card">
+                <h3><i class="fas fa-user-md me-2"></i>Doctor's Instructions</h3>
+                <div id="instr-content"><p style="color:#96a0bd;font-size:13px;">Loading...</p></div>
+            </div>
+
+            <!-- Doctor-only checkup requests -->
+            <div class="dash-card" id="checkup-requests-card" style="display:none;">
+                <h3><i class="fas fa-stethoscope me-2"></i>Checkup Requests</h3>
+                <div id="checkup-requests-content"><p style="color:#96a0bd;font-size:13px;">Loading...</p></div>
+            </div>
+
+            <!-- Chat history -->
+            <div class="dash-card">
+                <div class="dash-card-head">
+                    <h3><i class="fas fa-history me-2"></i>Recent Consultations</h3>
+                    <a href="/" class="btn-outline btn-sm"><i class="fas fa-comments me-1"></i>New Chat</a>
+                </div>
+                <div id="chat-content"><p style="color:#96a0bd;font-size:13px;">Loading...</p></div>
+            </div>
+
+            <!-- Doctor-only instruction composer -->
+            <div class="dash-card" id="instruction-card" style="display:none;">
+                <h3><i class="fas fa-paper-plane me-2"></i>Give Patient Instruction</h3>
+                <div class="row">
+                    <div class="col">
+                        <div class="form-group"><label>Patient</label><select id="instr-patient"></select></div>
+                    </div>
+                    <div class="col">
+                        <div class="form-group"><label>Instruction</label><textarea id="instr-text" rows="2" placeholder="Enter medical instruction..."></textarea></div>
+                    </div>
+                </div>
+                <button class="btn-primary" id="instr-btn" onclick="sendInstruction()"><i class="fas fa-paper-plane me-2"></i>Send Instruction</button>
+                <div id="instr-status" style="margin-top:8px;font-size:13px;"></div>
+            </div>
+        </div>
+    </div>
+    <script>
+        function toggleTheme(){var cur=document.documentElement.getAttribute('data-theme');var nxt=cur==='light'?'dark':'light';document.documentElement.setAttribute('data-theme',nxt);try{localStorage.setItem('theme',nxt);}catch(e){}updateThemeIcon(nxt);}
+        function updateThemeIcon(t){document.querySelectorAll('.theme-icon').forEach(function(el){el.className=t==='light'?'theme-icon fas fa-moon':'theme-icon fas fa-sun';});}
+        updateThemeIcon(document.documentElement.getAttribute('data-theme')||'dark');
+        let currentUser = null;
+
+        async function load() {
+            const r = await fetch('/me', { credentials:'include' });
+            if (!r.ok) { window.location.href = '/login'; return; }
+            const d = await r.json();
+            const u = d.user;
+            currentUser = u;
+            document.getElementById('dash-user-name').textContent = (u.name||'') + ' (' + (u.role||'') + ')';
+            document.getElementById('dash-greeting').textContent = 'Welcome, ' + (u.name||'User');
+            document.getElementById('dash-user-id').textContent = u.id || '-';
+
+            if (u.role === 'patient') {
+                document.getElementById('nav-health-link').style.display = 'inline-flex';
+                renderProfile(u);
+                renderInstructions(u.id);
+                renderChatHistory();
+                renderCheckup();
+            } else {
+                document.getElementById('profile-content').innerHTML = `<p><b>Qualification:</b> ${u.qualification || '-'}</p>`;
+                document.querySelector('#instruction-card').style.display = 'block';
+                await loadDoctorPatients();
+                document.getElementById('instr-content').innerHTML = '<p style="color:#96a0bd;font-size:13px;">Instructions you have written will appear here for patients.</p>';
+                document.getElementById('chat-content').innerHTML = '<p style="color:#96a0bd;font-size:13px;">Chat history is for patient accounts.</p>';
+                loadDoctorCheckups();
+            }
+        }
+
+        function renderProfile(u) {
+            const labels = { name:'Name', dob:'Date of Birth', id_type:'ID Type', id_number:'ID Number', qualified:'Qualification', medical_history:'Medical History', allergies:'Allergies', conditions:'Conditions', treatments:'Treatments' };
+            let html = '';
+            for (const k of ['name','dob','id_type','id_number','medical_history','allergies','conditions','treatments']) {
+                if (u[k]) html += `<p><b>${labels[k]}:</b> ${u[k]}</p>`;
+            }
+            document.getElementById('profile-content').innerHTML = html || '<p style="color:#96a0bd;font-size:13px;">No profile details yet. Click Edit to add your medical history.</p>';
+
+            // Prefill edit form
+            document.getElementById('pe-name').value = u.name || '';
+            document.getElementById('pe-dob').value = u.dob || '';
+            document.getElementById('pe-id-type').value = u.id_type || 'Aadhaar';
+            document.getElementById('pe-id-number').value = u.id_number || '';
+            document.getElementById('pe-medical-history').value = u.medical_history || '';
+            document.getElementById('pe-allergies').value = u.allergies || '';
+            document.getElementById('pe-conditions').value = u.conditions || '';
+            document.getElementById('pe-treatments').value = u.treatments || '';
+        }
+
+        function toggleEdit() {
+            const edit = document.getElementById('profile-edit');
+            edit.style.display = edit.style.display === 'none' ? 'block' : 'none';
+            document.getElementById('profile-content').style.display = edit.style.display === 'block' ? 'none' : 'block';
+        }
+
+        async function saveProfile() {
+            const btn = document.querySelector('#profile-edit .btn-primary');
+            const st = document.getElementById('profile-status');
+            btn.disabled = true; st.textContent = 'Saving...';
+            const body = {
+                name: document.getElementById('pe-name').value,
+                dob: document.getElementById('pe-dob').value,
+                id_type: document.getElementById('pe-id-type').value,
+                id_number: document.getElementById('pe-id-number').value,
+                medical_history: document.getElementById('pe-medical-history').value,
+                allergies: document.getElementById('pe-allergies').value,
+                conditions: document.getElementById('pe-conditions').value,
+                treatments: document.getElementById('pe-treatments').value
+            };
+            try {
+                const r = await fetch('/api/profile', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body), credentials:'include' });
+                const d = await r.json();
+                if (r.ok) {
+                    st.textContent = 'Saved!'; st.style.color = '#38BFA0';
+                    const me = await (await fetch('/me', { credentials:'include' })).json();
+                    currentUser = me.user;
+                    renderProfile(me.user);
+                    toggleEdit();
+                } else { st.textContent = d.detail || 'Failed'; st.style.color = '#f87171'; }
+            } catch(ex) { st.textContent = 'Error'; st.style.color = '#f87171'; }
+            setTimeout(() => { st.textContent = ''; }, 2500);
+            btn.disabled = false;
+        }
+
+        async function renderInstructions(patientId) {
+            const r = await fetch('/api/patient/instructions', { credentials:'include' });
+            const d = await r.json();
+            const list = d.instructions || [];
+            const box = document.getElementById('instr-content');
+            if (!list.length) { box.innerHTML = '<p style="color:#96a0bd;font-size:13px;">No doctor instructions yet.</p>'; return; }
+            box.innerHTML = list.map(i => `
+                <div class="timeline-item">
+                    <div class="timeline-text">${i.instruction_text}</div>
+                    <div class="timeline-meta"><i class="fas fa-user-md"></i> From doctor · ${new Date(i.created_at).toLocaleString()}</div>
+                </div>`).join('');
+        }
+
+        async function renderChatHistory() {
+            const r = await fetch('/api/chat/history', { credentials:'include' });
+            const d = await r.json();
+            const msgs = d.messages || [];
+            const box = document.getElementById('chat-content');
+            if (!msgs.length) { box.innerHTML = '<p style="color:#8294a6;font-size:13px;">No consultations yet. <a href="/" style="color:#1F8A72;">Start a conversation</a></p>'; return; }
+            const recent = msgs.slice(-8);
+            box.innerHTML = recent.map(m => `
+                <div class="chat-line ${m.role === 'user' ? 'chat-user' : 'chat-assistant'}">
+                    <span class="chat-role">${m.role === 'user' ? 'You' : (m.agent || 'Assistant')}</span>
+                    <span class="chat-snippet">${(m.content || '').slice(0, 200)}</span>
+                    <a class="chat-open" href="/" title="Open in chat">↗</a>
+                </div>`).join('');
+        }
+
+        async function loadDoctorPatients() {
+            const pr = await fetch('/api/doctor/patients', { credentials:'include' });
+            const pd = await pr.json();
+            const sel = document.getElementById('instr-patient');
+            sel.innerHTML = '';
+            const seen = new Set();
+            (pd.patients || []).forEach(p => {
+                if (seen.has(p.patient_id)) return;
+                seen.add(p.patient_id);
+                const o = document.createElement('option');
+                o.value = p.patient_id;
+                o.textContent = (p.instruction_text||'').slice(0,40) || p.patient_id;
+                sel.appendChild(o);
+            });
+            if (!seen.size) sel.innerHTML = '<option value="">No patients yet — add via new instruction</option>';
+        }
+
+        function esc(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+                return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+            });
+        }
+
+        async function renderCheckup() {
+            const r = await fetch('/api/checkup/status', { credentials:'include' });
+            const d = await r.json();
+            const card = document.getElementById('checkup-card');
+            const box = document.getElementById('checkup-content');
+            card.style.display = 'block';
+            const packages = d.packages || { full_body: 'Full Body Checkup' };
+
+            if (d.has_completed) {
+                const date = d.latest && d.latest.created_at;
+                box.innerHTML = `<p style="color:#38BFA0;margin:0;"><i class="fas fa-check-circle me-1"></i><b>Last full body checkup:</b> ${date ? new Date(date).toLocaleDateString(undefined,{year:'numeric',month:'long',day:'numeric'}) : 'completed'}</p>`;
+                return;
+            }
+            if (d.pending) {
+                const label = d.pending.status === 'scheduled' ? 'Scheduled' : 'Requested';
+                box.innerHTML = `
+                    <div class="timeline-item">
+                        <div class="timeline-text"><b>Full Body Checkup — ${label}</b></div>
+                        <div class="timeline-meta"><i class="fas fa-heartbeat"></i> ${new Date(d.pending.requested_at).toLocaleString()}${d.pending.preferred_date ? ' · Preferred date: ' + d.pending.preferred_date : ''}</div>
+                        <p style="color:#8294a6;font-size:13px;margin:8px 0 0;">Your care team is following up to schedule this for you.</p>
+                    </div>`;
+                return;
+            }
+            box.innerHTML = `
+                <div class="nudge">
+                    <p style="margin:0;"><i class="fas fa-heartbeat me-1"></i><b>No recent full-body health checkup on record.</b></p>
+                    <p style="font-size:13px;color:#8294a6;margin:8px 0 12px;">A regular checkup helps catch issues early. Opt in and your care team will contact you to schedule it.</p>
+                    <div id="checkup-form" style="display:none;margin-bottom:12px;">
+                        <div class="row">
+                            <div class="col">
+                                <div class="form-group"><label>Package</label><select id="cu-package">${Object.keys(packages).map(k => `<option value="${k}">${packages[k]}</option>`).join('')}</select></div>
+                            </div>
+                            <div class="col">
+                                <div class="form-group"><label>Preferred Date</label><input id="cu-date" type="date"></div>
+                            </div>
+                        </div>
+                        <div class="form-group"><label>Notes (optional)</label><input id="cu-notes" placeholder="Anything we should know..."></div>
+                        <button class="btn-primary" onclick="submitCheckup()"><i class="fas fa-calendar-check me-2"></i>Request Checkup</button>
+                        <span id="cu-status" style="margin-left:12px;font-size:13px;"></span>
+                    </div>
+                    <button class="btn-outline" onclick="toggleCheckupForm()"><i class="fas fa-calendar-plus me-1"></i>Opt in for Full Body Checkup</button>
+                </div>`;
+        }
+
+        function toggleCheckupForm() {
+            const f = document.getElementById('checkup-form');
+            f.style.display = f.style.display === 'none' ? 'block' : 'none';
+        }
+
+        async function submitCheckup() {
+            const st = document.getElementById('cu-status');
+            st.textContent = 'Sending...';
+            st.style.color = '#8294a6';
+            const body = {
+                package: document.getElementById('cu-package').value,
+                preferred_date: document.getElementById('cu-date').value || null,
+                notes: document.getElementById('cu-notes').value || ''
+            };
+            try {
+                const r = await fetch('/api/checkup/request', {
+                    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body), credentials:'include'
+                });
+                const d = await r.json();
+                if (r.ok) { st.textContent = 'Requested!'; st.style.color = '#38BFA0'; renderCheckup(); }
+                else { st.textContent = d.detail || 'Failed'; st.style.color = '#f87171'; }
+            } catch(ex) { st.textContent = 'Error'; st.style.color = '#f87171'; }
+        }
+
+        async function loadDoctorCheckups() {
+            const r = await fetch('/api/doctor/checkups', { credentials:'include' });
+            const d = await r.json();
+            const card = document.getElementById('checkup-requests-card');
+            const box = document.getElementById('checkup-requests-content');
+            if (!r.ok) return;
+            card.style.display = 'block';
+            const items = (d.checkups || []).filter(c => c.status === 'requested' || c.status === 'scheduled');
+            if (!items.length) { box.innerHTML = '<p style="color:#96a0bd;font-size:13px;">No pending checkup requests.</p>'; return; }
+            box.innerHTML = items.map(c => `
+                <div class="timeline-item">
+                    <div class="timeline-text"><b>${esc(c.patient_name || c.patient_id)}</b> — Full Body Checkup</div>
+                    <div class="timeline-meta"><i class="fas fa-heartbeat"></i> Requested ${new Date(c.created_at).toLocaleString()}${c.preferred_date ? ' · Preferred: ' + esc(c.preferred_date) : ''}</div>
+                    ${c.notes ? `<div class="timeline-meta">${esc(c.notes)}</div>` : ''}
+                    <div class="dash-card-actions" style="margin-top:8px;">
+                        ${c.status === 'requested' ? `<button class="btn-outline btn-sm" onclick="updateCheckup('${c.id}','scheduled')"><i class="fas fa-clock me-1"></i>Mark Scheduled</button>` : ''}
+                        <button class="btn-outline btn-sm" onclick="updateCheckup('${c.id}','completed')"><i class="fas fa-check me-1"></i>Mark Completed</button>
+                    </div>
+                </div>`).join('');
+        }
+
+        async function updateCheckup(id, status) {
+            const r = await fetch('/api/checkup/' + id, {
+                method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ status: status }), credentials:'include'
+            });
+            if (r.ok) loadDoctorCheckups();
+        }
+
+        async function logout() { await fetch('/logout', { method:'POST', credentials:'include' }); window.location.href = '/login'; }
+        async function copyId() {
+            try { await navigator.clipboard.writeText(currentUser.id); } catch(e) {}
+        }
+
+        async function sendInstruction() {
+            const text = document.getElementById('instr-text').value;
+            const pid = document.getElementById('instr-patient').value;
+            if (!text || !pid) return;
+            const btn = document.getElementById('instr-btn');
+            const st = document.getElementById('instr-status');
+            btn.disabled = true;
+            try {
+                const fd = new FormData();
+                fd.append('instruction_text', text);
+                fd.append('patient_id', pid);
+                const r = await fetch('/patient/instruction', { method:'POST', body:fd, credentials:'include' });
+                const d = await r.json();
+                st.textContent = d.status === 'success' ? 'Instruction sent!' : 'Failed';
+                st.style.color = d.status === 'success' ? '#38BFA0' : '#f87171';
+                document.getElementById('instr-text').value = '';
+                if (d.status === 'success') loadDoctorPatients();
+            } catch(ex) { st.textContent = 'Error'; st.style.color='#f87171'; }
+            btn.disabled = false;
+        }
+
+        load();
+    </script>
+</body>
+</html>

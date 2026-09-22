@@ -1,0 +1,48 @@
+# --- Web framework ---
+fastapi>=0.115.0
+uvicorn>=0.34.0
+starlette>=0.46.0
+python-multipart>=0.0.20
+jinja2>=3.1.0
+werkzeug>=3.1.0
+pydantic>=2.10.0
+python-dotenv>=1.0.0
+requests>=2.32.0
+httpx>=0.28.0
+
+# --- LangChain / LangGraph (0.3.x ecosystem) ---
+langchain>=0.3.28,<1.0
+langchain-core>=0.3.75,<1.0
+langchain-community>=0.3.28,<1.0
+langchain-qdrant>=0.2.0,<1.0
+langgraph>=0.3.9,<1.0
+langgraph-checkpoint>=2.0.19
+langchain-text-splitters>=0.3.6
+
+# --- Google Gemini ---
+langchain-google-genai>=2.0.0,<3.0.0
+google-ai-generativelanguage>=0.7.0
+
+# --- Vector store (local Qdrant + hybrid search) ---
+qdrant-client>=1.13.5
+fastembed>=0.6.0
+
+# --- Document parsing for RAG ingestion ---
+# docling-slim with onnxruntime layout models + rapidocr (ONNX) OCR = NO torch needed.
+# Use 'docling' (standard extra) instead ONLY if you accept torch (~500MB extra download).
+docling-slim[format-pdf,format-office,convert-core,extract-core,models-onnxruntime,feat-ocr-rapidocr-onnx]>=2.126.0
+
+# --- Optional cross-encoder reranking (requires torch; install only if desired) ---
+# sentence-transformers>=3.0.0
+
+# --- Supabase (optional - auth + database) ---
+supabase>=2.0.0
+psycopg2-binary>=2.9.0
+
+# --- Speech (ElevenLabs) ---
+elevenlabs>=1.54.0
+pydub>=0.25.1
+
+# --- Utilities ---
+numpy>=1.26.0
+pillow>=11.0.0

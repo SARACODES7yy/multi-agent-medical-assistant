@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediAssist AI</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🩺</text></svg>">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script>(function(){try{var s=localStorage.getItem('theme');var m=window.matchMedia('(prefers-color-scheme: light)').matches;var t=s||(m?'light':'dark');document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+    <div class="app-layout">
+        <aside class="sidebar">
+            <div class="sidebar-head">
+                <div class="brand-tile small"><i class="fas fa-robot"></i></div>
+                <div class="lh-sm">
+                    <div class="fw-bold sidebar-brand">MediAssist</div>
+                    <div class="sidebar-sub">Clinical assistant</div>
+                </div>
+                <span class="status-pill ms-auto"><span class="live-dot"></span> Live</span>
+            </div>
+
+            <!-- User Profile Card -->
+            <div class="sidebar-profile" id="sidebar-profile">
+                <div class="sidebar-profile-avatar" id="profile-avatar">?</div>
+                <div class="sidebar-profile-info">
+                    <div class="sidebar-profile-name" id="profile-name">Guest</div>
+                    <div class="sidebar-profile-role" id="profile-role">Not logged in</div>
+                    <div class="sidebar-profile-id" id="profile-id" style="display:none;"></div>
+                </div>
+                <div class="sidebar-profile-actions" id="profile-actions">
+                    <a href="/login" class="btn-outline btn-sm">Login</a>
+                </div>
+            </div>
+
+            <div class="agent-group">
+                <div class="agent-group-title"><i class="fas fa-microchip"></i> Agents</div>
+                <div class="agent-card">
+                    <i class="fas fa-comment-medical"></i>
+                    <div><b>Conversation</b><span>General health Q&amp;A</span></div>
+                </div>
+                <div class="agent-card">
+                    <i class="fas fa-database"></i>
+                    <div><b>Medical RAG</b><span>Grounded in ingested records</span></div>
+                </div>
+                <div class="agent-card">
+                    <i class="fas fa-search"></i>
+                    <div><b>Web Search</b><span>Live sources when needed</span></div>
+                </div>
+                <div class="agent-card">
+                    <i class="fas fa-file-image"></i>
+                    <div><b>Image Analysis</b><span>Reads reports and scans</span></div>
+                </div>
+            </div>
+
+            <div class="agent-group">
+                <div class="agent-group-title"><i class="fas fa-layer-group"></i> How It Works</div>
+                <div class="step"><span class="step-n">1</span> Ask a question or upload a report</div>
+                <div class="step"><span class="step-n">2</span> Agents route &amp; search the corpus</div>
+                <div class="step"><span class="step-n">3</span> Structured answer + review</div>
+            </div>
+
+            <div class="agent-group">
+                <div class="agent-group-title"><i class="fas fa-shield-heart"></i> Built for safety</div>
+                <div class="note">Every answer is checked at input and output. Image findings wait for a doctor's sign-off.</div>
+            </div>
+
+            <div class="sidebar-bottom">
+                <a href="/dashboard" class="btn-outline w-100" id="dashboard-link" style="display:none;"><i class="fas fa-chart-line me-2"></i>Dashboard</a>
+                <a href="/profile" class="btn-outline w-100 mt-2" id="profile-health-link" style="display:none;"><i class="fas fa-notes-medical me-2"></i>Health Profile</a>
+                <button id="clear-chat" class="btn-clear w-100 mt-2">
+                    <i class="fas fa-trash-alt me-2"></i> Clear Conversation
+                </button>
+            </div>
+        </aside>
+
+        <main class="chat-main">
+            <header class="chat-header">
+                <div class="d-flex align-items-center gap-3">
+                    <div class="brand-tile"><i class="fas fa-stethoscope"></i></div>
+                    <div>
+                        <h5 class="mb-0 brand-title">MediAssist AI</h5>
+                        <span class="brand-subtitle d-none d-sm-block">Multi-Agent Medical Assistant</span>
+                    </div>
+                </div>
+                <div class="header-right">
+                    <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme"><i class="theme-icon fas fa-moon"></i></button>
+                    <span class="status-pill"><span class="live-dot"></span> Online</span>
+                    <a href="/dashboard" class="btn-outline btn-sm header-dash-link" id="header-dash-link" style="display:none;"><i class="fas fa-chart-line me-1"></i>Dashboard</a>
+                    <a href="/profile" class="btn-outline btn-sm header-dash-link" id="header-health-link" style="display:none;"><i class="fas fa-notes-medical me-1"></i>Profile</a>
+                    <a href="/home" class="btn-outline btn-sm header-dash-link" id="header-triage-link" style="display:none;"><i class="fas fa-clipboard-list me-1"></i>Triage</a>
+                    <button class="btn-outline btn-sm" id="header-logout" onclick="doLogout()" style="display:none;"><i class="fas fa-sign-out-alt me-1"></i>Logout</button>
+                </div>
+            </header>
+
+            <div id="chat-body" class="chat-body">
+                <div class="welcome-panel">
+                    <svg class="wp-trace" viewBox="0 0 260 44" aria-hidden="true">
+                        <path class="trace-path" d="M0 22 H92 L99 22 L104 8 L111 38 L118 20 L126 20 L132 22 H184 L191 22 L196 8 L203 38 L210 20 L218 20 L224 22 H260"/>
+                    </svg>
+                    <h2>How can I help you?</h2>
+                    <p>Ask a medical question, or attach a report and read through it together. Your data stays private.</p>
+                </div>
+            </div>
+
+            <div class="chat-footer">
+                <div id="preview-container" class="composer-preview" style="display:none;">
+                    <img id="preview-image" class="composer-preview-img" src="">
+                    <span id="preview-file-icon" class="composer-preview-file-icon" style="display:none;"><i class="fas fa-file-pdf"></i></span>
+                    <span class="composer-preview-name" id="preview-name"></span>
+                    <button type="button" class="composer-preview-remove" id="remove-image" title="Remove"><i class="fas fa-times"></i></button>
+                </div>
+                <form id="chat-form" class="composer">
+                    <button type="button" class="composer-attach" id="attach-btn" title="Attach image or PDF"><i class="fas fa-plus"></i></button>
+                    <button type="button" class="mic-btn" id="mic-btn" title="Voice input" style="display:none;"><i class="fas fa-microphone"></i></button>
+                    <input type="file" id="image-upload" accept="image/*,application/pdf,.pdf" hidden>
+                    <textarea id="message-input" class="composer-input" rows="1" placeholder="Ask a medical question…"></textarea>
+                    <button type="submit" class="composer-send" title="Send"><i class="fas fa-arrow-up"></i></button>
+                </form>
+                <div class="composer-hint">MediAssist can make mistakes. Verify important info.</div>
+            </div>
+        </main>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script>
+        const chatBody = document.getElementById('chat-body');
+        const chatForm = document.getElementById('chat-form');
+        const messageInput = document.getElementById('message-input');
+        const imageUpload = document.getElementById('image-upload');
+        const previewContainer = document.getElementById('preview-container');
+        const previewImage = document.getElementById('preview-image');
+        const removeImageBtn = document.getElementById('remove-image');
+        const clearChatBtn = document.getElementById('clear-chat');
+        const micBtn = document.getElementById('mic-btn');
+
+        let chatMessages = JSON.parse(localStorage.getItem('medichat_history') || '[]');
+        let currentUser = null;
+        let currentValidationThreadId = null;
+        let isRecording = false;
+        let recognition = null;
+        let playingAudio = null;
+
+        // Load user profile
+        async function loadProfile() {
+            try {
+                const r = await fetch('/me', { credentials: 'include' });
+                if (!r.ok) return;
+                const d = await r.json();
+                const u = d.user;
+                currentUser = u;
+
+                document.getElementById('profile-avatar').textContent = (u.name || '?')[0].toUpperCase();
+                document.getElementById('profile-name').textContent = u.name || u.email;
+                document.getElementById('profile-role').textContent = u.role || 'user';
+
+                if (u.role === 'patient') {
+                    const idEl = document.getElementById('profile-id');
+                    idEl.textContent = 'ID: ' + u.id;
+                    idEl.style.display = 'block';
+                    document.getElementById('profile-health-link').style.display = 'flex';
+                    document.getElementById('header-health-link').style.display = 'inline-flex';
+                }
+
+                document.getElementById('profile-actions').innerHTML = '<button class="btn-outline btn-sm" onclick="doLogout()">Logout</button>';
+                document.getElementById('header-logout').style.display = 'inline-flex';
+                document.getElementById('dashboard-link').style.display = 'flex';
+                document.getElementById('header-dash-link').style.display = 'inline-flex';
+            } catch(ex) {}
+        }
+
+        async function doLogout() {
+            await fetch('/logout', { method:'POST', credentials:'include' });
+            window.location.href = '/login';
+        }
+
+        function toggleTheme(){var cur=document.documentElement.getAttribute('data-theme');var nxt=cur==='light'?'dark':'light';document.documentElement.setAttribute('data-theme',nxt);try{localStorage.setItem('theme',nxt);}catch(e){}updateThemeIcon(nxt);}
+        function updateThemeIcon(t){document.querySelectorAll('.theme-icon').forEach(function(el){el.className=t==='light'?'theme-icon fas fa-moon':'theme-icon fas fa-sun';});}
+        updateThemeIcon(document.documentElement.getAttribute('data-theme')||'dark');
+
+        // Web Speech API setup for voice input
+        const REC_WATCHDOG_MS = 8000;
+        let chatRecBase = '', recFinals = '', recInterim = '', recWatchdog = null;
+        function chatSetLive(on) {
+            isRecording = on;
+            micBtn.classList.toggle('recording', on);
+        }
+        function chatClearWatchdog() { if (recWatchdog) { clearTimeout(recWatchdog); recWatchdog = null; } }
+        function chatArmWatchdog() {
+            chatClearWatchdog();
+            recWatchdog = setTimeout(() => {
+                recWatchdog = null;
+                chatSetLive(false);
+                if (recognition) { try { recognition.abort(); } catch(e) {} }
+            }, REC_WATCHDOG_MS);
+        }
+        function chatStopMic() {
+            chatClearWatchdog();
+            if (recognition) { try { recognition.stop(); } catch(e) {} }
+        }
+        function chatStartMic() {
+            if (isRecording || !('SpeechRecognition' in window) && !('webkitSpeechRecognition' in window)) return;
+            if (recognition) { try { recognition.abort(); } catch(e) {} }
+            chatRecBase = messageInput.value; recFinals = ''; recInterim = '';
+            try {
+                const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+                const r = new SR();
+                recognition = r;
+                r.continuous = false;
+                r.interimResults = true;
+                r.lang = 'en-US';
+                r.onstart = () => { chatSetLive(true); chatArmWatchdog(); };
+                r.onresult = (e) => {
+                    let finals = '', interim = '';
+                    for (let i = e.resultIndex; i < e.results.length; i++) {
+                        if (e.results[i].isFinal) finals += e.results[i][0].transcript;
+                        else interim += e.results[i][0].transcript;
+                    }
+                    if (finals) { recFinals += finals; recInterim = ''; }
+                    else if (interim) recInterim = interim;
+                    messageInput.value = (chatRecBase + ' ' + recFinals + ' ' + recInterim).replace(/\s+/g, ' ').trim();
+                    messageInput.focus();
+                };
+                r.onend = () => { chatClearWatchdog(); recFinals += recInterim; recInterim = ''; chatSetLive(false); };
+                r.onerror = () => { chatClearWatchdog(); recFinals += recInterim; recInterim = ''; chatSetLive(false); };
+                r.start();
+            } catch(e) {
+                recognition = null;
+                chatSetLive(false);
+            }
+        }
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) micBtn.style.display = 'grid';
+        else micBtn.style.display = 'none';
+        micBtn.addEventListener('click', () => { if (isRecording) chatStopMic(); else chatStartMic(); });
+
+        loadProfile();
+
+        function renderHistory() {
+            if (!chatMessages.length) return;
+            chatBody.innerHTML = '';
+            for (const m of chatMessages) {
+                if (m.role === 'user') {
+                    const div = document.createElement('div');
+                    div.className = 'message user-message';
+                    div.innerHTML = `<p>${marked.parse(m.content || '')}</p>`;
+                    chatBody.appendChild(div);
+                } else {
+                    const div = document.createElement('div');
+                    div.className = 'message assistant-message';
+                    div.innerHTML = `<div class="agent-tag">${m.agent || 'Assistant'}</div><div>${marked.parse(m.content || '')}</div>`;
+                    chatBody.appendChild(div);
+                }
+            }
+            chatBody.scrollTop = chatBody.scrollHeight;
+        }
+
+        fetch('/api/chat/history', { credentials:'include' })
+            .then(r => { if (r.ok) return r.json(); throw new Error('not-authed'); })
+            .then(d => {
+                if (d.messages && d.messages.length) {
+                    chatMessages = d.messages.map(m => ({ role: m.role, content: m.content, agent: m.agent }));
+                    localStorage.setItem('medichat_history', JSON.stringify(chatMessages));
+                    renderHistory();
+                }
+            })
+            .catch(() => {});
+
+        messageInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+        });
+
+        document.getElementById('attach-btn').addEventListener('click', () => imageUpload.click());
+        imageUpload.addEventListener('change', function(e) {
+            const f = e.target.files[0];
+            if (f) {
+                document.getElementById('preview-name').textContent = f.name;
+                const isPdf = (f.type === 'application/pdf') || /\.pdf$/i.test(f.name);
+                const iconEl = document.getElementById('preview-file-icon');
+                if (isPdf) {
+                    previewImage.style.display = 'none';
+                    iconEl.style.display = 'grid';
+                } else {
+                    iconEl.style.display = 'none';
+                    previewImage.style.display = 'block';
+                    const reader = new FileReader();
+                    reader.onload = function(ev) { previewImage.src = ev.target.result; };
+                    reader.readAsDataURL(f);
+                }
+                previewContainer.style.display = 'flex';
+            }
+        });
+        removeImageBtn.addEventListener('click', function() {
+            imageUpload.value = ''; previewContainer.style.display = 'none'; previewImage.src = ''; previewImage.style.display = 'block';
+            const ic = document.getElementById('preview-file-icon'); if (ic) ic.style.display = 'none';
+        });
+
+        clearChatBtn.addEventListener('click', function() {
+            chatMessages = [];
+            localStorage.removeItem('medichat_history');
+            chatBody.innerHTML = `<div class="welcome-panel"><svg class="wp-trace" viewBox="0 0 260 44" aria-hidden="true"><path class="trace-path" d="M0 22 H92 L99 22 L104 8 L111 38 L118 20 L126 20 L132 22 H184 L191 22 L196 8 L203 38 L210 20 L218 20 L224 22 H260"/></svg><h2>How can I help you?</h2><p>Ask a medical question, or attach a report and read through it together. Your data stays private.</p></div>`;
+            chatBody.scrollTop = 0;
+        });
+
+        chatForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const message = messageInput.value.trim();
+            const file = imageUpload.files && imageUpload.files[0];
+            if (!message && !file) return;
+
+            const isPdfFile = file && ((file.type === 'application/pdf') || /\.pdf$/i.test(file.name));
+            const imageDataUrl = (!isPdfFile && file) ? previewImage.src : null;
+
+            const userDiv = document.createElement('div');
+            userDiv.className = 'message user-message';
+            let userContent = '';
+            if (message) userContent += `<p>${marked.parse(message)}</p>`;
+            if (file) {
+                if (isPdfFile) {
+                    userContent += `<div class="user-file-chip"><i class="fas fa-file-pdf"></i><span>${file.name}</span></div>`;
+                } else if (imageDataUrl && previewImage.src) {
+                    userContent += `<div class="mt-2"><img src="${imageDataUrl}" alt="Uploaded" style="max-height:200px;border-radius:10px; display:block;"></div>`;
+                } else {
+                    userContent += `<div class="user-file-chip"><i class="fas fa-file-image"></i><span>${file.name}</span></div>`;
+                }
+                if (!message) userContent = userContent || `<p>${marked.parse(file.name)}</p>`;
+            }
+            if (!userContent) userContent = `<p>${marked.parse(message || 'Uploaded a file')}</p>`;
+            userDiv.innerHTML = userContent;
+            chatBody.appendChild(userDiv);
+            chatMessages.push({ role: 'user', content: message || (file ? 'Uploaded: ' + file.name : '') });
+
+            const think = document.createElement('div');
+            think.className = 'message assistant-message thinking';
+            think.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
+            chatBody.appendChild(think);
+            chatBody.scrollTop = chatBody.scrollHeight;
+
+            // capture file before clearing input
+            const uploadFile = file;
+            messageInput.value = '';
+            messageInput.style.height = 'auto';
+            previewContainer.style.display = 'none';
+            imageUpload.value = '';
+            previewImage.src = '';
+            const iconEl2 = document.getElementById('preview-file-icon');
+            if (iconEl2) iconEl2.style.display = 'none';
+
+            try {
+                let data;
+                if (uploadFile) {
+                    const formData = new FormData();
+                    formData.append('text', message);
+                    formData.append('file', uploadFile);
+                    const res = await fetch('/upload', { method:'POST', body:formData, credentials:'include' });
+                    data = await res.json();
+                } else {
+                    const res = await fetch('/chat', {
+                        method:'POST', headers:{'Content-Type':'application/json'},
+                        body:JSON.stringify({query:message, conversation_history:[]}), credentials:'include'
+                    });
+                    data = await res.json();
+                }
+                chatBody.removeChild(think);
+                if (data.status === 'validation_required') {
+                    currentValidationThreadId = data.thread_id;
+                    addValidationBox(data.message, data.thread_id);
+                } else {
+                    addAssistantMessage(data.response, data.agent, data.result_image);
+                }
+            } catch(err) {
+                chatBody.removeChild(think);
+                const errDiv = document.createElement('div');
+                errDiv.className = 'message assistant-message';
+                errDiv.innerHTML = '<p class="text-danger">Error processing request.</p>';
+                chatBody.appendChild(errDiv);
+            }
+            chatBody.scrollTop = chatBody.scrollHeight;
+        });
+
+        function addAssistantMessage(response, agent, resultImage) {
+            const div = document.createElement('div');
+            div.className = 'message assistant-message';
+            let html = `<div class="agent-tag">${agent}</div><div>${marked.parse(response)}</div>`;
+            html += `<button class="listen-btn" title="Read aloud"><i class="fas fa-volume-high"></i></button>`;
+            if (resultImage) html += `<div class="mt-3"><img src="${resultImage}" class="result-image" alt="Result"></div>`;
+            div.innerHTML = html;
+            chatBody.appendChild(div);
+            chatMessages.push({ role: 'assistant', content: response, agent });
+            localStorage.setItem('medichat_history', JSON.stringify(chatMessages.slice(-50)));
+
+            const listenBtn = div.querySelector('.listen-btn');
+            listenBtn.addEventListener('click', () => {
+                if (window._speechPlaying) { speechSynthesis.cancel(); window._speechPlaying = false; listenBtn.classList.remove('playing'); return; }
+                const utterance = new SpeechSynthesisUtterance(response);
+                utterance.rate = 1.0;
+                utterance.pitch = 1.0;
+                speechSynthesis.speak(utterance);
+                window._speechPlaying = true;
+                listenBtn.classList.add('playing');
+                utterance.onend = () => { window._speechPlaying = false; listenBtn.classList.remove('playing'); };
+                utterance.onerror = () => { window._speechPlaying = false; listenBtn.classList.remove('playing'); };
+            });
+        }
+
+        function addValidationBox(message, threadId) {
+            currentValidationThreadId = threadId;
+            const vbox = document.createElement('div');
+            vbox.className = 'validation-box';
+            vbox.innerHTML = `
+                <div class="validation-text"><i class="fas fa-shield-halved"></i> ${message}</div>
+                <div class="validation-actions">
+                    <button class="validation-btn validation-btn-yes" data-decision="yes">✓ Confirm</button>
+                    <button class="validation-btn validation-btn-no" data-decision="no">✗ Reject</button>
+                    <textarea class="validation-comments" rows="2" placeholder="Comments (optional)…"></textarea>
+                    <button class="validation-btn validation-submit">Submit Validation</button>
+                </div>`;
+            chatBody.appendChild(vbox);
+            vbox.querySelector('.validation-btn-yes').addEventListener('click', () => submitValidation('yes', vbox));
+            vbox.querySelector('.validation-btn-no').addEventListener('click', () => submitValidation('no', vbox));
+            vbox.querySelector('.validation-submit').addEventListener('click', () => {
+                const comments = vbox.querySelector('.validation-comments').value;
+                const decision = vbox.querySelector('.validation-btn-yes').dataset.decision;
+                submitValidation(decision, vbox, comments);
+            });
+            chatBody.scrollTop = chatBody.scrollHeight;
+        }
+
+        async function submitValidation(decision, vbox, comments) {
+            if (!currentValidationThreadId) return;
+            vbox.querySelectorAll('.validation-btn').forEach(b => b.disabled = true);
+            try {
+                const res = await fetch('/validate', {
+                    method:'POST', headers:{'Content-Type':'application/json'},
+                    body: JSON.stringify({thread_id: currentValidationThreadId, decision, comments}),
+                    credentials:'include'
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    vbox.remove();
+                    addAssistantMessage(data.response, data.agent);
+                } else {
+                    vbox.querySelector('.validation-text').innerHTML = '<i class="fas fa-circle-exclamation"></i> Validation failed. Please try again.';
+                    vbox.querySelectorAll('.validation-btn').forEach(b => b.disabled = false);
+                }
+            } catch(ex) {
+                vbox.querySelector('.validation-text').innerHTML = '<i class="fas fa-circle-exclamation"></i> Network error.';
+                vbox.querySelectorAll('.validation-btn').forEach(b => b.disabled = false);
+            }
+        }
+    </script>
+</body>
+</html>
