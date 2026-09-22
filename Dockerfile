@@ -32,14 +32,15 @@ COPY . .
 RUN mkdir -p uploads/backend uploads/frontend uploads/skin_lesion_output uploads/speech data
 
 # Expose port
-EXPOSE 8000
+ENV PORT=7860
+EXPOSE 7860
 
 # Set environment variable for Python to run in unbuffered mode
 ENV PYTHONUNBUFFERED=1
 
 # Set healthcheck
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD curl -f http://localhost:8000/health || exit 1
+  CMD curl -f http://localhost:7860/health || exit 1
 
 # Run the application
 CMD ["python", "app.py"]

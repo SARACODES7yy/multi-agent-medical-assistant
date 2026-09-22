@@ -64,7 +64,10 @@ class Database:
 class SQLiteDB(Database):
     """SQLite backend (default, zero external dependencies)."""
 
-    def __init__(self, db_path="data/medical.db"):
+    def __init__(self, db_path=None):
+        if db_path is None:
+            _data_dir = os.getenv("DATA_DIR", "./data").rstrip("/\\")
+            db_path = os.path.join(_data_dir, "medical.db")
         self.db_path = db_path
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self._init_schema()
@@ -304,7 +307,7 @@ class SupabaseDB(Database):
             return
         import psycopg2
         try:
-            conn = psycopg2.connect(self.postgres_uri)
+            conn = psycopg2.connect(self.postgres_uri, connect_timeout=5)
             cur = conn.cursor()
             cur.execute(open(os.path.join(os.path.dirname(__file__), "schema.sql")).read())
             cur.execute(self._rls_sql())

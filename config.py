@@ -207,9 +207,10 @@ class RAGConfig:
         self.embedding_model = DEFAULT_EMBEDDING_MODEL
         self.distance_metric = "Cosine"
         self.use_local = True
-        self.vector_local_path = "./data/qdrant_db_v2"
-        self.doc_local_path = "./data/docs_db"
-        self.parsed_content_dir = "./data/parsed_docs"
+        _data_dir = os.getenv("DATA_DIR", "./data").rstrip("/\\")
+        self.vector_local_path = os.path.join(_data_dir, "qdrant_db_v2")
+        self.doc_local_path = os.path.join(_data_dir, "docs_db")
+        self.parsed_content_dir = os.path.join(_data_dir, "parsed_docs")
         self.url = os.getenv("QDRANT_URL")
         self.api_key = os.getenv("QDRANT_API_KEY")
         self.collection_name = "medical_assistance_rag"
@@ -268,8 +269,8 @@ class ValidationConfig:
 
 class APIConfig:
     def __init__(self):
-        self.host = "0.0.0.0"
-        self.port = 8000
+        self.host = os.getenv("HOST", "0.0.0.0")
+        self.port = int(os.getenv("PORT", "8000"))
         self.debug = True
         self.rate_limit = 10
         self.max_image_upload_size = 5
