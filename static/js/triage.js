@@ -98,6 +98,7 @@ var state = {
   session: null,
   extractedTests: [],
   queueServer: [],
+  queueSessions: [],
   queueLoaded: false,
   seedLoaded: false,
   batchBar: false,
@@ -461,7 +462,7 @@ async function generate() {
     if ($('#intake-error')) { $('#intake-error').textContent = 'AI summarizer could not be reached — a rule-based draft is shown instead. Verify your connection or try again.'; $('#intake-error').style.display = ''; }
     state.note = ruleBasedNote(pkg); state.note.fallback = 'rule-fallback'; applyNote(state.note);
   }
-  saveSession(); toggleGenerateState();
+  saveSession(); pushSession(); toggleGenerateState();
   $('#new-intake-btn').style.display = '';
   if (state.isStaff) $('#open-queue-btn').style.display = '';
 }
@@ -617,6 +618,23 @@ function saveSession() { if (!state.session) return; var arr = lsGet(SK(), []); 
 function getSessions() { return lsGet(SK(), []); }
 function addAudit(action, detail) { var arr = lsGet(AK(), []); arr.unshift({ id: uuid(), ts: new Date().toISOString(), action: action, detail: detail, actor: state.role + ':' + ($('#reviewer-role') ? $('#reviewer-role').value : '') }); if (arr.length > 200) arr.length = 200; lsSet(AK(), arr); }
 
+function parseList(v) { if (Array.isArray(v)) return v; if (typeof v === 'string' && v) { try { var p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch (e) { return []; } } return []; }
+function sessionPayload(s) {
+  var consentEl = $('#consent');
+  return { id: s.id, anonym_code: s.code || '', facility: s.facility || '', scenario: s.scenario || '', facility_name: s.facilityName || '', age_band: s.ageBand || '', sex: s.sex || '', lang: s.lang || '', narrative: s.narrative || '', risk: s.risk || 'standard', score: s.score || 0, summary: s.summary || '', timeline: s.timeline || '', chief_complaints: parseList(s.chiefComplaints), red_flags: parseList(s.redFlags), missing_info: parseList(s.missingInfo), followup_questions: parseList(s.followupQuestions), tests: parseList(s.tests), follow_up_date: s.followUpDate || null, consent: !!(consentEl && consentEl.checked), status: s.status || 'requested', src: s.src || 'local', created_at: s.createdAt || null };
+}
+function pushSession() {
+  if (!state.session) return Promise.resolve();
+  return fetch('/api/triage/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(sessionPayload(state.session)) })
+    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function(j) {
+      if (j.status === 'ok' && j.session) {
+        state.queueSessions = [j.session].concat(state.queueSessions.filter(function(x) { return x.id !== j.session.id; }));
+      }
+    })
+    .catch(function() {});
+}
+
 function toggleGenerateState() {
   $('#generate-btn').disabled = true;
   var consent = ($('#consent') ? $('#consent').checked : false);
@@ -656,12 +674,30 @@ async function batchValidate() {
 async function refreshQueue() {
   if (!state.isStaff) return;
   $('#queue-skeleton').style.display = ''; $('#queue-list').innerHTML = '';
-  try { var d = await fetch('/api/doctor/checkups', { credentials: 'include' }); var j = await d.json(); state.queueServer = (j.status === 'ok' && j.checkups) ? j.checkups : []; } catch (e) { state.queueServer = []; }
-  state.queueLoaded = true; addAudit('queue_view', 'Reviewer queue refreshed (' + (state.queueServer.length) + ' server checkup requests).'); renderQueue();
+  try {
+    var d = await fetch('/api/doctor/checkups', { credentials: 'include' });
+    var j = await d.json();
+    var all = (j.status === 'ok' && j.checkups) ? j.checkups : [];
+    state.queueServer = all.filter(function(c) { return c.type !== 'triage'; });
+    state.queueSessions = all.filter(function(c) { return c.type === 'triage'; });
+  } catch (e) { state.queueServer = []; state.queueSessions = []; }
+  state.queueLoaded = true; addAudit('queue_view', 'Reviewer queue refreshed (' + (state.queueServer.length + state.queueSessions.length) + ' server items).'); renderQueue();
 }
 function mergedQueue() {
-  var local = getSessions().slice(); var items = local.map(function(s) { return Object.assign({}, s, { src: 'local' }); });
-  state.queueServer.forEach(function(c) { items.push({ id: c.id, code: c.id.slice(0, 8), createdAt: c.created_at, risk: 'standard', status: c.status, src: 'server', patient_id: c.patient_id, patientName: c.patient_name || '', package: c.package, preferredDate: c.preferred_date, narrative: c.notes || '', facility: '' }); });
+  var items = []; var seen = {};
+  state.queueSessions.forEach(function(s) {
+    if (!s.id || seen[s.id]) return; seen[s.id] = true;
+    items.push({ id: s.id, code: s.anonym_code || s.id.slice(0, 8), createdAt: s.created_at || s.createdAt || '', risk: s.risk || 'standard', score: s.score || 0, status: s.status || 'requested', src: 'server', type: 'triage', patient_id: s.user_id || null, patientName: s.patient_name || '', narrative: s.narrative || '', facility: s.facility || '', scenario: s.scenario || '', facilityName: s.facility_name || '', summary: s.summary || '', timeline: s.timeline || '', chiefComplaints: parseList(s.chief_complaints), redFlags: parseList(s.red_flags), missingInfo: parseList(s.missing_info), followupQuestions: parseList(s.followup_questions), tests: parseList(s.tests), followUpDate: s.follow_up_date || null });
+  });
+  state.queueServer.forEach(function(c) {
+    if (!c.id || seen[c.id]) return; seen[c.id] = true;
+    items.push({ id: c.id, code: c.id.slice(0, 8), createdAt: c.created_at, risk: 'standard', score: 0, status: c.status, src: 'server', type: 'checkup', patient_id: c.patient_id, patientName: c.patient_name || '', package: c.package, preferredDate: c.preferred_date, narrative: c.notes || '', facility: '' });
+  });
+  var local = getSessions().slice();
+  local.forEach(function(s) {
+    if (!s.id || seen[s.id]) return; seen[s.id] = true;
+    items.push(Object.assign({}, s, { src: 'local', type: 'triage' }));
+  });
   if (state.seedLoaded) addAudit('queue_seed', 'Demo cases present in queue (' + local.filter(function(s) { return s.src === 'local'; }).length + ' local).');
   items.sort(function(a, b) { var wa = RISK_META[a.risk] ? RISK_META[a.risk].order : 2; var wb = RISK_META[b.risk] ? RISK_META[b.risk].order : 2; if (wa !== wb) return wa - wb; return new Date(b.createdAt) - new Date(a.createdAt); });
   return items;
@@ -689,8 +725,9 @@ function renderQueue() {
 }
 
 var expandedItem = null;
-function expandQueueItem(item) { expandedItem = item; var rm = RISK_META[item.risk]; var sm = STATUS_META[item.status] || STATUS_META.requested; var html = '<div class="triage-note-section"><h4><i class="fas fa-file-medical"></i> Structured Triage Note</h4><p>' + (state.note ? state.note.summary : '<em>No note generated for this item.</em>') + '</p></div>';
-  html += '<div class="triage-note-section"><h4><i class="fas fa-history"></i> Timeline</h4><p>' + fmtDate(item.createdAt) + ' · Created via ' + item.src + ' session.</p></div>';
+function expandQueueItem(item) { expandedItem = item; var rm = RISK_META[item.risk]; var sm = STATUS_META[item.status] || STATUS_META.requested; var _sum = item.summary || (state.note ? state.note.summary : ''); var html = '<div class="triage-note-section"><h4><i class="fas fa-file-medical"></i> Structured Triage Note</h4><p>' + (_sum ? esc(_sum) : '<em>No note generated for this item.</em>') + '</p></div>';
+  html += '<div class="triage-note-section"><h4><i class="fas fa-history"></i> Timeline</h4><p>' + fmtDate(item.createdAt) + ' · Created via ' + item.src + ' session.</p>' + (item.timeline ? '<p>' + esc(item.timeline) + '</p>' : '') + '</div>';
+  if (item.redFlags && item.redFlags.length) { html += '<div class="triage-note-section"><h4><i class="fas fa-flag"></i> Red Flags</h4><ul>' + item.redFlags.map(function(f) { return '<li>' + esc(f) + '</li>'; }).join('') + '</ul></div>'; }
   if (item.tests && item.tests.length) { html += '<div class="triage-note-section"><h4><i class="fas fa-vial"></i> Findings</h4>'; item.tests.forEach(function(t) { html += '<div class="triage-finding-card"><div class="triage-finding-test">' + esc(t.name) + '</div><div class="triage-finding-value">' + esc(String(t.value)) + ' ' + esc(t.unit) + ' <span class="triage-flag-pill triage-flag-' + (t.flag || 'unknown') + '">' + esc(t.flag || 'unknown') + '</span></div></div>'; }); html += '</div>'; }
   html += '<div class="triage-note-section"><h4><i class="fas fa-arrow-right-from-bracket"></i> Referral Prep</h4><div id="referral-preview"></div></div>';
   $('#referral-body').innerHTML = html;
@@ -705,9 +742,28 @@ function expandQueueItem(item) { expandedItem = item; var rm = RISK_META[item.ri
 }
 
 async function updateStatus(id, status) {
-  var item = mergedQueue().find(function(i) { return i.id === id; }); if (!item) return;
-  var prev = item.status; item.status = status; addAudit('review_status', 'Checkup ' + id + ' moved from ' + prev + ' → ' + status + '.'); renderQueue();
-  if (item.src === 'server') { try { await fetch('/api/checkup/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ status: status }) }); } catch (e) { item.status = prev; renderQueue(); } }
+  var item = mergedQueue().find(function(i) { return i.id === id || i.code === id; }); if (!item) return;
+  var prev = item.status;
+  item.status = status;
+  var arr = lsGet(SK(), []); var idx = arr.findIndex(function(s) { return s.id === item.id; }); if (idx >= 0) { arr[idx].status = status; lsSet(SK(), arr); }
+  var si = state.queueSessions.findIndex(function(s) { return s.id === item.id; }); if (si >= 0) state.queueSessions[si].status = status;
+  var ci = state.queueServer.findIndex(function(c) { return c.id === item.id; }); if (ci >= 0) state.queueServer[ci].status = status;
+  addAudit('review_status', 'Session ' + (item.code || item.id) + ' moved from ' + prev + ' → ' + status + '.');
+  renderQueue();
+  function revert() {
+    item.status = prev;
+    var a2 = lsGet(SK(), []); var i2 = a2.findIndex(function(s) { return s.id === item.id; }); if (i2 >= 0) { a2[i2].status = prev; lsSet(SK(), a2); }
+    var s2 = state.queueSessions.findIndex(function(s) { return s.id === item.id; }); if (s2 >= 0) state.queueSessions[s2].status = prev;
+    var c2 = state.queueServer.findIndex(function(c) { return c.id === item.id; }); if (c2 >= 0) state.queueServer[c2].status = prev;
+    renderQueue();
+  }
+  if (item.src === 'server') {
+    var url = item.type === 'checkup' ? '/api/checkup/' + item.id : '/api/triage/session/' + item.id;
+    try {
+      var r = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ status: status }) });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+    } catch (e) { revert(); saveSession(); updateBadge(); return; }
+  }
   saveSession(); updateBadge();
 }
 

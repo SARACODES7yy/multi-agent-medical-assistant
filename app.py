@@ -753,9 +753,82 @@ def doctor_checkups(session_id: Optional[str] = Cookie(None)):
         prof = db.get_profile(c["patient_id"]) or {}
         result.append({
             **c,
+            "type": "checkup",
             "patient_name": prof.get("name", "") or (p.get("email", "") if p else c["patient_id"]),
         })
+    try:
+        for s in db.get_triage_sessions(limit=200):
+            owner = db.get_user(s["user_id"]) if s.get("user_id") else None
+            prof = db.get_profile(s["user_id"]) if s.get("user_id") else None
+            result.append({
+                **s,
+                "type": "triage",
+                "patient_name": (prof or {}).get("name", "") or (owner.get("email", "") if owner else ""),
+            })
+    except Exception as e:
+        logger.warning(f"Failed to load triage sessions for queue: {e}")
+    result.sort(key=lambda r: r.get("created_at") or "", reverse=True)
     return {"status": "ok", "checkups": result}
+
+class TriageSessionUpsert(BaseModel):
+    id: Optional[str] = None
+    anonym_code: str = ""
+    facility: str = ""
+    scenario: str = ""
+    facility_name: str = ""
+    age_band: str = ""
+    sex: str = ""
+    lang: str = ""
+    narrative: str = ""
+    risk: str = "standard"
+    score: int = 0
+    summary: str = ""
+    timeline: str = ""
+    chief_complaints: List[str] = []
+    red_flags: List[str] = []
+    missing_info: List[str] = []
+    followup_questions: List[str] = []
+    tests: List[dict] = []
+    follow_up_date: Optional[str] = None
+    consent: bool = False
+    status: str = "requested"
+    src: str = "local"
+    created_at: Optional[str] = None
+
+@app.post("/api/triage/sessions")
+async def upsert_triage_session(req: TriageSessionUpsert, session_id: Optional[str] = Cookie(None)):
+    """Create or update a triage session (persisted from the intake flow)."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if req.risk not in ("emergency", "urgent", "standard", "routine"):
+        req.risk = "standard"
+    if req.status not in ("requested", "scheduled", "completed"):
+        req.status = "requested"
+    session = req.model_dump()
+    session["id"] = session.get("id") or str(uuid.uuid4())
+    session["user_id"] = payload["user_id"]
+    saved = db.upsert_triage_session(session)
+    if not saved:
+        raise HTTPException(status_code=500, detail="Failed to save triage session")
+    return {"status": "ok", "session": saved}
+
+@app.patch("/api/triage/session/{ts_id}")
+async def update_triage_session(ts_id: str, request: Request, session_id: Optional[str] = Cookie(None)):
+    """Doctor/nurse advances a triage session's queue status."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if payload["role"] not in ("doctor", "nurse"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    body = await request.json()
+    status = body.get("status")
+    if status not in ("requested", "scheduled", "completed"):
+        raise HTTPException(status_code=400, detail="Invalid status")
+    ok = db.update_triage_session_status(ts_id, status, body.get("follow_up_date"))
+    if not ok:
+        raise HTTPException(status_code=404, detail="Triage session not found")
+    return {"status": "success"}
 
 @app.patch("/api/checkup/{checkup_id}")
 async def update_checkup(checkup_id: str, request: Request, session_id: Optional[str] = Cookie(None)):

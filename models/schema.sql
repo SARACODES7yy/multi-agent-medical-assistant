@@ -64,3 +64,30 @@ CREATE TABLE IF NOT EXISTS health_checkups (
     updated_at TEXT NOT NULL,
     FOREIGN KEY (patient_id) REFERENCES users(id)
 );
+CREATE TABLE IF NOT EXISTS triage_sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    anonym_code TEXT NOT NULL DEFAULT '',
+    facility TEXT DEFAULT '',
+    scenario TEXT DEFAULT '',
+    facility_name TEXT DEFAULT '',
+    age_band TEXT DEFAULT '',
+    sex TEXT DEFAULT '',
+    lang TEXT DEFAULT '',
+    narrative TEXT DEFAULT '',
+    risk TEXT DEFAULT 'standard',
+    score INTEGER DEFAULT 0,
+    summary TEXT DEFAULT '',
+    timeline TEXT DEFAULT '',
+    chief_complaints TEXT DEFAULT '[]',
+    red_flags TEXT DEFAULT '[]',
+    missing_info TEXT DEFAULT '[]',
+    followup_questions TEXT DEFAULT '[]',
+    tests TEXT DEFAULT '[]',
+    follow_up_date TEXT,
+    consent BOOLEAN DEFAULT FALSE,
+    status TEXT NOT NULL DEFAULT 'requested' CHECK(status IN ('requested','scheduled','completed')),
+    src TEXT DEFAULT 'local',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);

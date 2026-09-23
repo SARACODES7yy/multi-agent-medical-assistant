@@ -1,4 +1,5 @@
 import os
+import json
 import sqlite3
 import uuid
 import logging
@@ -10,6 +11,35 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 USE_SUPABASE = os.getenv("USE_SUPABASE", "false").lower() == "true"
+
+_TRIAGE_LIST_FIELDS = ("chief_complaints", "red_flags", "missing_info", "followup_questions", "tests")
+
+
+def _encode_triage_row(row):
+    out = dict(row)
+    for k in _TRIAGE_LIST_FIELDS:
+        v = out.get(k)
+        if isinstance(v, (list, tuple)):
+            out[k] = json.dumps(list(v), ensure_ascii=False)
+        elif v is None:
+            out[k] = "[]"
+    out["consent"] = bool(out.get("consent"))
+    return out
+
+
+def _decode_triage_row(d):
+    out = dict(d)
+    for k in _TRIAGE_LIST_FIELDS:
+        v = out.get(k)
+        if isinstance(v, str):
+            try:
+                out[k] = json.loads(v)
+            except Exception:
+                out[k] = []
+        elif not isinstance(v, list):
+            out[k] = []
+    out["consent"] = bool(out.get("consent"))
+    return out
 
 
 class Database:
@@ -58,6 +88,15 @@ class Database:
         raise NotImplementedError
 
     def update_checkup_status(self, checkup_id, status):
+        raise NotImplementedError
+
+    def upsert_triage_session(self, session):
+        raise NotImplementedError
+
+    def get_triage_sessions(self, limit=200):
+        raise NotImplementedError
+
+    def update_triage_session_status(self, session_id, status, follow_up_date=None):
         raise NotImplementedError
 
 
@@ -148,6 +187,33 @@ class SQLiteDB(Database):
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             FOREIGN KEY (patient_id) REFERENCES users(id)
+        );
+        CREATE TABLE IF NOT EXISTS triage_sessions (
+            id TEXT PRIMARY KEY,
+            user_id TEXT,
+            anonym_code TEXT NOT NULL DEFAULT '',
+            facility TEXT DEFAULT '',
+            scenario TEXT DEFAULT '',
+            facility_name TEXT DEFAULT '',
+            age_band TEXT DEFAULT '',
+            sex TEXT DEFAULT '',
+            lang TEXT DEFAULT '',
+            narrative TEXT DEFAULT '',
+            risk TEXT DEFAULT 'standard',
+            score INTEGER DEFAULT 0,
+            summary TEXT DEFAULT '',
+            timeline TEXT DEFAULT '',
+            chief_complaints TEXT DEFAULT '[]',
+            red_flags TEXT DEFAULT '[]',
+            missing_info TEXT DEFAULT '[]',
+            followup_questions TEXT DEFAULT '[]',
+            tests TEXT DEFAULT '[]',
+            follow_up_date TEXT,
+            consent INTEGER DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'requested' CHECK(status IN ('requested','scheduled','completed')),
+            src TEXT DEFAULT 'local',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
         );
         """)
         conn.commit()
@@ -287,6 +353,55 @@ class SQLiteDB(Database):
         conn.commit(); conn.close()
         return cur.rowcount > 0
 
+    _TRIAGE_COLS = ("id", "user_id", "anonym_code", "facility", "scenario", "facility_name",
+                    "age_band", "sex", "lang", "narrative", "risk", "score", "summary", "timeline",
+                    "chief_complaints", "red_flags", "missing_info", "followup_questions", "tests",
+                    "follow_up_date", "consent", "status", "src", "created_at", "updated_at")
+
+    def upsert_triage_session(self, session):
+        row = _encode_triage_row({k: session.get(k) for k in self._TRIAGE_COLS})
+        row["id"] = str(row.get("id") or uuid.uuid4())
+        row["created_at"] = row.get("created_at") or self._now()
+        row["updated_at"] = session.get("updated_at") or self._now()
+        row["consent"] = 1 if row.get("consent") else 0
+        cols = ",".join(self._TRIAGE_COLS)
+        placeholders = ",".join("?" for _ in self._TRIAGE_COLS)
+        update_set = ",".join(f"{c}=excluded.{c}" for c in self._TRIAGE_COLS if c not in ("id", "created_at"))
+        conn = self._connect()
+        conn.execute(
+            f"INSERT INTO triage_sessions ({cols}) VALUES ({placeholders}) "
+            f"ON CONFLICT(id) DO UPDATE SET {update_set}",
+            tuple(row.get(c) for c in self._TRIAGE_COLS)
+        )
+        conn.commit()
+        r = conn.execute("SELECT * FROM triage_sessions WHERE id=?", (row["id"],)).fetchone()
+        conn.close()
+        return _decode_triage_row(dict(r)) if r else None
+
+    def get_triage_sessions(self, limit=200):
+        conn = self._connect()
+        rows = conn.execute(
+            "SELECT * FROM triage_sessions ORDER BY created_at DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+        conn.close()
+        return [_decode_triage_row(dict(r)) for r in rows]
+
+    def update_triage_session_status(self, session_id, status, follow_up_date=None):
+        conn = self._connect()
+        if follow_up_date is None:
+            cur = conn.execute(
+                "UPDATE triage_sessions SET status=?, updated_at=? WHERE id=?",
+                (status, self._now(), session_id)
+            )
+        else:
+            cur = conn.execute(
+                "UPDATE triage_sessions SET status=?, follow_up_date=?, updated_at=? WHERE id=?",
+                (status, follow_up_date, self._now(), session_id)
+            )
+        conn.commit(); conn.close()
+        return cur.rowcount > 0
+
 
 class SupabaseDB(Database):
     """Supabase backend (requires SUPABASE_URL + keys in .env)."""
@@ -359,6 +474,15 @@ class SupabaseDB(Database):
             THEN CREATE POLICY "health_checkups_update" ON health_checkups FOR UPDATE USING (true); END IF;
             IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'health_checkups'::regclass AND polname = 'health_checkups_delete')
             THEN CREATE POLICY "health_checkups_delete" ON health_checkups FOR DELETE USING (true); END IF;
+            ALTER TABLE triage_sessions ENABLE ROW LEVEL SECURITY;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'triage_sessions'::regclass AND polname = 'triage_sessions_select')
+            THEN CREATE POLICY "triage_sessions_select" ON triage_sessions FOR SELECT USING (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'triage_sessions'::regclass AND polname = 'triage_sessions_insert')
+            THEN CREATE POLICY "triage_sessions_insert" ON triage_sessions FOR INSERT WITH CHECK (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'triage_sessions'::regclass AND polname = 'triage_sessions_update')
+            THEN CREATE POLICY "triage_sessions_update" ON triage_sessions FOR UPDATE USING (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'triage_sessions'::regclass AND polname = 'triage_sessions_delete')
+            THEN CREATE POLICY "triage_sessions_delete" ON triage_sessions FOR DELETE USING (true); END IF;
         END $$;
         """
 
@@ -500,6 +624,40 @@ class SupabaseDB(Database):
             return bool(r and r.data)
         except Exception as e:
             logger.error(f"Supabase update_checkup_status failed: {e}")
+            return False
+
+    def upsert_triage_session(self, session):
+        row = _encode_triage_row(session)
+        row["id"] = str(row.get("id") or uuid.uuid4())
+        row["created_at"] = row.get("created_at") or self._now()
+        row["updated_at"] = self._now()
+        try:
+            r = self.client.table("triage_sessions").upsert(row).execute()
+            if r and r.data and len(r.data) > 0:
+                return _decode_triage_row(r.data[0])
+            return None
+        except Exception as e:
+            logger.error(f"Supabase upsert_triage_session failed: {e}")
+            raise
+
+    def get_triage_sessions(self, limit=200):
+        try:
+            r = self.client.table("triage_sessions").select("*") \
+                .order("created_at", desc=True).limit(limit).execute()
+            return [_decode_triage_row(d) for d in (r.data if r and r.data else [])]
+        except Exception as e:
+            logger.error(f"Supabase get_triage_sessions failed: {e}")
+            return []
+
+    def update_triage_session_status(self, session_id, status, follow_up_date=None):
+        update = {"status": status, "updated_at": self._now()}
+        if follow_up_date is not None:
+            update["follow_up_date"] = follow_up_date
+        try:
+            r = self.client.table("triage_sessions").update(update).eq("id", session_id).execute()
+            return bool(r and r.data)
+        except Exception as e:
+            logger.error(f"Supabase update_triage_session_status failed: {e}")
             return False
 
 
