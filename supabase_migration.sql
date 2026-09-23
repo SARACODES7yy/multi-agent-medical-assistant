@@ -156,6 +156,7 @@ CREATE TABLE IF NOT EXISTS doctor_availability (
     created_at TEXT NOT NULL,
     FOREIGN KEY (doctor_id) REFERENCES users(id)
 );
+ALTER TABLE doctor_availability ENABLE ROW LEVEL SECURITY;
 
 CREATE TABLE IF NOT EXISTS call_bookings (
     id TEXT PRIMARY KEY,
@@ -171,6 +172,7 @@ CREATE TABLE IF NOT EXISTS call_bookings (
     FOREIGN KEY (doctor_id) REFERENCES users(id),
     FOREIGN KEY (availability_id) REFERENCES doctor_availability(id)
 );
+ALTER TABLE call_bookings ENABLE ROW LEVEL SECURITY;
 
 -- Book Call RLS policies
 DO $$ BEGIN
