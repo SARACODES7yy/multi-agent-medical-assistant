@@ -56,10 +56,20 @@ from elevenlabs.client import ElevenLabs
 
 from config import Config
 from agents.agent_decision import process_query, get_graph
+from agents.image_analysis_agent import ImageAnalysisAgent as _ImageAnalysisAgent
 from auth import AuthManager, create_session_cookie, verify_session_cookie
 from models.db import get_db, Database
 from models.patient_rag import PatientRAG
 from utils.pdf_extract import extract_pdf_text
+
+# Module-level image agent (lazy): avoids re-loading OCR/LLM models per request.
+_image_agent: _ImageAnalysisAgent | None = None
+
+def _get_image_agent() -> _ImageAnalysisAgent:
+    global _image_agent
+    if _image_agent is None:
+        _image_agent = _ImageAnalysisAgent(config=config)
+    return _image_agent
 
 # Load configuration
 logger = logging.getLogger(__name__)
@@ -395,80 +405,59 @@ async def chat(
                 logger.warning(f"Failed to index PDF to patient RAG: {se}")
         return {"status": "success", "response": response_text, "agent": agent_name}
     else:
-        # Image branch: AI vision via MEDICAL_IMAGE_AGENT (same as /upload)
+        # Image branch: direct OCR + text-LLM (bypasses slow agent graph, same as /upload fix)
         downscale_image_file(file_path)
-        augmented_text = augment_query(query_text or "Analyze this medical image", session_id)
+        extra_ctx = query_text or ""
         try:
-            query = {"text": augmented_text, "image": file_path}
+            agent = _get_image_agent()
+            response_text = await run_in_threadpool(
+                agent.analyze_medical_image, file_path, extra_ctx
+            )
+        except Exception as img_ex:
+            logger.warning(f"/chat image analysis failed: {img_ex}, using OCR fallback")
             try:
-                response_data = await run_in_threadpool(process_query, query, history, user_id)
-            except Exception as img_err:
-                logger.warning(f"Image query failed: {img_err}, trying fallback text analysis")
-                try:
-                    response_data = await run_in_threadpool(process_query, {"text": augmented_text}, history, user_id)
-                except Exception as fallback_err:
-                    try:
-                        from agents.agent_decision import AgentConfig
-                        ocr_text = AgentConfig.image_analyzer.image_classifier._ocr_image(file_path)
-                    except Exception:
-                        ocr_text = ""
-                    response_data = {
-                        "status": "success",
-                        "output": f"Extracted Image Text:\n\n{ocr_text}" if ocr_text else "Medical report image attached for reviewer triage.",
-                        "agent_name": "Image_OCR_Extractor"
-                    }
-            if response_data.get("status") == "validation_required":
-                response.set_cookie(key="session_id", value=session_id)
-                return {"status": "validation_required", "message": response_data["message"], "thread_id": response_data["thread_id"]}
-            msgs = response_data.get("messages")
-            if msgs and isinstance(msgs, list) and len(msgs) > 0:
-                last = msgs[-1]
-                cnt = last.content if hasattr(last, "content") else (last.get("content", "") if isinstance(last, dict) else str(last))
-                if isinstance(cnt, list):
-                    cnt = " ".join(str(c) for c in cnt)
-                response_text = str(cnt) if cnt else str(response_data.get("output", ""))
-            else:
-                # validation path already handled; fallback
-                _msg = response_data.get('messages', [{'content': response_data.get('output', '')}])[-1]
-                _cnt = _msg.get('content', '') if isinstance(_msg, dict) else (getattr(_msg, 'content', '') or str(_msg))
-                if isinstance(_cnt, list): _cnt = " ".join(str(c) for c in _cnt)
-                response_text = str(_cnt) if _cnt else str(response_data.get('output', ''))
-            agent_name = response_data.get("agent_name", "")
-            response.set_cookie(key="session_id", value=session_id)
-            if user_id:
-                db.add_message(user_id, "user", query_text or "Uploaded a medical image")
-                db.add_message(user_id, "assistant", response_text, agent=agent_name)
-            result = {"status": "success", "response": response_text, "agent": agent_name}
-            # Attach the structured JSON block (if the agent returned one) so the
-            # frontend can render OCR findings graphically without re-parsing text.
-            try:
-                _json_block = None
-                import json as _json
-                _t = response_text
-                _b = _t.find("{")
-                if _b >= 0:
-                    _depth = 0; _end = -1; _in_str = False; _esc = False
-                    for _i in range(_b, len(_t)):
-                        _ch = _t[_i]
-                        if _in_str:
-                            if _esc: _esc = False
-                            elif _ch == "\\": _esc = True
-                            elif _ch == '"': _in_str = False
-                        else:
-                            if _ch == '"': _in_str = True
-                            elif _ch == "{": _depth += 1
-                            elif _ch == "}":
-                                _depth -= 1
-                                if _depth == 0: _end = _i; break
-                    if _end > _b:
-                        _json_block = _json.loads(_t[_b:_end + 1])
-                result["response_json"] = _json_block
-            except Exception as _pe:
-                print(f"[chat] no structured JSON in image response: {_pe}")
+                ocr_text = _get_image_agent().image_classifier._ocr_image(file_path)
+                response_text = f"Extracted Image Text:\n\n{ocr_text}" if ocr_text else "Medical report image attached for reviewer triage."
+            except Exception:
+                response_text = "Medical report image received. Please share the details with your healthcare provider."
+        agent_name = "MEDICAL_IMAGE_AGENT"
+        response.set_cookie(key="session_id", value=session_id)
+        if user_id:
+            db.add_message(user_id, "user", query_text or "Uploaded a medical image")
+            db.add_message(user_id, "assistant", response_text, agent=agent_name)
+        result = {"status": "success", "response": response_text, "agent": agent_name}
+
+        # Attach the structured JSON block (if the agent returned one) so the
+        # frontend can render OCR findings graphically without re-parsing text.
+        try:
+            _json_block = None
+            import json as _json
+            _t = response_text
+            _b = _t.find("{")
+            if _b >= 0:
+                _depth = 0; _end = -1; _in_str = False; _esc = False
+                for _i in range(_b, len(_t)):
+                    _ch = _t[_i]
+                    if _in_str:
+                        if _esc: _esc = False
+                        elif _ch == "\\": _esc = True
+                        elif _ch == '"': _in_str = False
+                    else:
+                        if _ch == '"': _in_str = True
+                        elif _ch == "{": _depth += 1
+                        elif _ch == "}":
+                            _depth -= 1
+                            if _depth == 0: _end = _i; break
+                if _end > _b:
+                    _json_block = _json.loads(_t[_b:_end + 1])
+            result["response_json"] = _json_block
+        except Exception as _pe:
+            print(f"[chat] no structured JSON in image response: {_pe}")
         finally:
             try: os.remove(file_path)
             except Exception: pass
         return result
+
 
 @app.post("/upload")
 async def upload_file(
@@ -597,26 +586,25 @@ async def upload_file(
                 "agent": agent_name
             }
         else:
-            # --- Image path: existing image analysis workflow ---
-            augmented_text = augment_query(text or "Analyze this medical image", session_id)
-            query = {"text": augmented_text, "image": file_path}
-            # process_query is fully synchronous (local OCR + several LLM calls).
-            # Run it in a worker thread so this single-worker server keeps answering
-            # /health and other requests instead of hanging until the proxy gives up (502).
+            # --- Image path: direct OCR + text-LLM (bypasses slow agent graph) ---
+            # Calling process_query with an image dict goes through 4-6 serial LLM
+            # hops (routing → classify → extract → insight → format) which easily
+            # exceeds Render's ~30 s proxy timeout → 502. Instead we call the
+            # ImageClassifier directly: RapidOCR (local) + one Groq text call ≈ 5-15 s.
+            extra_ctx = text or ""
             try:
-                response_data = await run_in_threadpool(process_query, query, history, user_id)
-            except Exception:
-                # Fall back to text-only analysis when the image analysis agent fails
-                response_data = await run_in_threadpool(process_query, {"text": augmented_text}, history, user_id)
-            if response_data.get("status") == "validation_required":
-                response.set_cookie(key="session_id", value=session_id)
-                return {"status": "validation_required", "message": response_data["message"], "thread_id": response_data["thread_id"]}
-            _msg = response_data.get('messages', [{'content': response_data.get('output', '')}])[-1]
-            _cnt = _msg.get('content', '') if isinstance(_msg, dict) else str(_msg)
-            if isinstance(_cnt, list):
-                _cnt = ' '.join(str(c) for c in _cnt)
-            response_text = str(_cnt) if _cnt else str(response_data.get('output', ''))
-            agent_name = response_data.get("agent_name", "")
+                agent = _get_image_agent()
+                response_text = await run_in_threadpool(
+                    agent.analyze_medical_image, file_path, extra_ctx
+                )
+            except Exception as img_ex:
+                logger.warning(f"/upload direct image analysis failed: {img_ex}")
+                # Graceful fallback: return a placeholder so the UI doesn't error
+                response_text = (
+                    "The medical image has been received. OCR analysis encountered an issue; "
+                    "please share the document details with your healthcare provider."
+                )
+            agent_name = "MEDICAL_IMAGE_AGENT"
 
             # Set session cookie
             response.set_cookie(key="session_id", value=session_id)
