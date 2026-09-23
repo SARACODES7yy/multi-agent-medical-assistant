@@ -117,6 +117,17 @@ def is_pdf(filename):
 def is_image(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_IMAGE_EXTENSIONS
 
+def downscale_image_file(path, max_dim=1600):
+    """Shrink very large photos to bound OCR/LLM time and RAM (free-tier 502 guard). Never raises."""
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            if max(im.size) > max_dim:
+                im.thumbnail((max_dim, max_dim), Image.LANCZOS)
+                im.save(path)
+    except Exception as e:
+        logger.warning(f"Image downscale skipped: {e}")
+
 def cleanup_old_audio():
     """Deletes all .mp3 files in the uploads/speech folder every 5 minutes."""
     while True:
@@ -271,9 +282,11 @@ async def chat(
     history = db.get_chat_history(user_id, limit=config.max_conversation_history) if user_id else []
     # Build augmented text like /upload does (include patient context)
     if is_pdf_file:
-        # PDF branch: extract text and synthesize via conversation agent
+        # PDF branch: extract text and synthesize via conversation agent.
+        # Both docling extraction and the LLM call are blocking: run them in a
+        # worker thread so this single-worker server keeps answering /health (502 guard).
         try:
-            pdf_text, page_count = extract_pdf_text(file_path, max_pages=config.api.max_pdf_pages)
+            pdf_text, page_count = await run_in_threadpool(extract_pdf_text, file_path, config.api.max_pdf_pages)
         except ValueError as ve:
             try: os.remove(file_path)
             except Exception: pass
@@ -289,7 +302,7 @@ async def chat(
         query_text_pdf = f"[PDF CONTENT - {page_count} page(s)]\n{truncated}\n\n[USER QUESTION]\n{query_text or 'Summarize this document'}"
         augmented_text = augment_query(query_text_pdf, session_id)
         try:
-            response_data = process_query(augmented_text, conversation_history=history, user_id=user_id)
+            response_data = await run_in_threadpool(process_query, augmented_text, history, user_id)
         finally:
             try: os.remove(file_path)
             except Exception: pass
@@ -316,14 +329,15 @@ async def chat(
         return {"status": "success", "response": response_text, "agent": agent_name}
     else:
         # Image branch: AI vision via MEDICAL_IMAGE_AGENT (same as /upload)
+        downscale_image_file(file_path)
         augmented_text = augment_query(query_text or "Analyze this medical image", session_id)
         try:
             query = {"text": augmented_text, "image": file_path}
             try:
-                response_data = process_query(query, conversation_history=history, user_id=user_id)
+                response_data = await run_in_threadpool(process_query, query, history, user_id)
             except Exception:
                 # Fall back to text-only analysis when the image analysis agent fails
-                response_data = process_query({"text": augmented_text}, conversation_history=history, user_id=user_id)
+                response_data = await run_in_threadpool(process_query, {"text": augmented_text}, history, user_id)
             if response_data.get("status") == "validation_required":
                 response.set_cookie(key="session_id", value=session_id)
                 return {"status": "validation_required", "message": response_data["message"], "thread_id": response_data["thread_id"]}
@@ -439,14 +453,7 @@ async def upload_file(
     # Bound OCR/LLM time and RAM: downscale very large photos before analysis.
     # (Full-res phone photos spike memory on small Render instances -> 502.)
     if is_img_file:
-        try:
-            from PIL import Image
-            with Image.open(file_path) as im:
-                if max(im.size) > 1600:
-                    im.thumbnail((1600, 1600), Image.LANCZOS)
-                    im.save(file_path)
-        except Exception as e:
-            logger.warning(f"Image downscale skipped: {e}")
+        downscale_image_file(file_path)
 
     try:
         payload = verify_session_cookie(session_id)
@@ -457,8 +464,9 @@ async def upload_file(
 
         if is_pdf_file:
             # --- PDF path: extract text, answer inline, index into RAG ---
+            # docling extraction + LLM call are blocking: threadpool keeps /health alive (502 guard).
             try:
-                pdf_text, page_count = extract_pdf_text(file_path, max_pages=config.api.max_pdf_pages)
+                pdf_text, page_count = await run_in_threadpool(extract_pdf_text, file_path, config.api.max_pdf_pages)
             except ValueError as ve:
                 return JSONResponse(
                     status_code=400,
@@ -488,7 +496,7 @@ async def upload_file(
             augmented_text = augment_query(query_text, session_id)
 
             query = augmented_text
-            response_data = process_query(query, conversation_history=history, user_id=user_id)
+            response_data = await run_in_threadpool(process_query, query, history, user_id)
             if response_data.get("status") == "validation_required":
                 response.set_cookie(key="session_id", value=session_id)
                 return {"status": "validation_required", "message": response_data["message"], "thread_id": response_data["thread_id"]}

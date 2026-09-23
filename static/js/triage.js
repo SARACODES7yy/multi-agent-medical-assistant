@@ -398,7 +398,15 @@ function handleFile(file) {
       addAudit('ocr', 'OCR processed ' + file.name + ' — ' + tests.length + ' findings extracted.');
     })
     .catch(function(e) {
-      if (errEl) { errEl.textContent = 'Upload failed: ' + (e.message || e); errEl.style.display = ''; }
+      var raw = e.message || String(e);
+      var m = raw.match(/HTTP (\d+)/);
+      var code = m ? m[1] : '';
+      var friendly = (code === '502' || code === '504')
+        ? 'The server timed out analyzing that file (large files take longer on the free tier). Try a smaller file, or try again in a minute.'
+        : (code === '413'
+          ? 'That file is too large. Images: under 5MB (JPG under 2MB works best). PDFs: under 10MB and 50 pages.'
+          : 'Upload failed: ' + raw);
+      if (errEl) { errEl.textContent = friendly; errEl.style.display = ''; }
       var dz = $('#dropzone'); if (dz) dz.innerHTML = '<i class="fas fa-cloud-arrow-up triage-dropzone-icon"></i><p class="triage-dropzone-title" id="dropzone-title">Click to upload a lab/report image</p><p class="triage-dropzone-sub">PNG / JPG / JPEG / PDF · AI-based analysis</p>';
     });
 }
