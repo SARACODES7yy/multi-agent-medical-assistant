@@ -1,5 +1,5 @@
-﻿# Supabase migration — triage_sessions + RLS policies
-# Run in Supabase Dashboard: SQL Editor → New Query → paste → Run
+﻿-- Supabase migration — triage_sessions + RLS policies
+-- Run in Supabase Dashboard: SQL Editor → New Query → paste → Run
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     email TEXT UNIQUE NOT NULL,
