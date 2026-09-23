@@ -35,10 +35,9 @@ langchain-groq>=0.3.0
 qdrant-client>=1.13.5
 fastembed>=0.6.0
 
-# --- Document parsing for RAG ingestion ---
-# docling-slim with onnxruntime layout models + rapidocr (ONNX) OCR = NO torch needed.
-# Use 'docling' (standard extra) instead ONLY if you accept torch (~500MB extra download).
-docling-slim[format-pdf,format-office,convert-core,extract-core,models-onnxruntime,feat-ocr-rapidocr-onnx]>=2.126.0
+# --- Document parsing & OCR (fast, lightweight, pure ONNX, no torch) ---
+rapidocr>=3.0.0
+pypdfium2>=4.30.0
 
 # --- Optional cross-encoder reranking (requires torch; install only if desired) ---
 # sentence-transformers>=3.0.0

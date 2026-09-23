@@ -418,6 +418,8 @@ function handleFile(file) {
         friendly = 'The server timed out analyzing that file. Please try again in a moment.';
       } else if (raw.indexOf('413') >= 0) {
         friendly = 'File is too large. Allowed formats: PNG/JPG under 5MB, PDF under 10MB.';
+      } else if (raw.indexOf('400') >= 0) {
+        friendly = 'Could not read document. Please upload a clear photo or standard PDF lab report.';
       } else if (!raw) {
         friendly = 'Upload failed. Please try again.';
       }
