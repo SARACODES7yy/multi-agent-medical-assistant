@@ -128,23 +128,49 @@ def downscale_image_file(path, max_dim=1600):
 
 
 async def describe_scanned_pdf(file_path, extra_context=""):
-    """Read a scanned (image-only) PDF via rasterize + Gemini vision.
+    """Read a scanned (image-only) PDF via rasterize + vision or local OCR fallback.
 
-    Returns ``(text, page_count)``. Raises ``ValueError`` when vision is not
-    configured (GOOGLE_API_KEY missing) or nothing readable comes back.
+    Returns ``(text, page_count)``.
     """
-    if not (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")):
-        raise ValueError(
-            "This PDF looks scanned (no readable text) and image analysis needs "
-            "a Gemini key (GOOGLE_API_KEY is not configured on the server)."
-        )
     from utils.pdf_extract import rasterize_pdf_pages
     from agents.agent_decision import AgentConfig
     pages = await run_in_threadpool(rasterize_pdf_pages, file_path)
+    if not pages:
+        raise ValueError("Could not render pages from the PDF.")
     classifier = AgentConfig.image_analyzer.image_classifier
-    text = await run_in_threadpool(classifier.describe_page_images, pages, extra_context)
+
+    text = ""
+    has_vision = bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"))
+    if has_vision:
+        try:
+            text = await run_in_threadpool(classifier.describe_page_images, pages, extra_context)
+        except Exception as ve:
+            logger.warning(f"Vision page extraction failed: {ve}")
+
     if not text or not text.strip():
-        raise ValueError("No readable content found in the scanned PDF, even with image analysis.")
+        # Fallback: run local OCR on each rasterized page image
+        page_texts = []
+        import tempfile
+        for i, page_bytes in enumerate(pages):
+            tmp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                    tmp.write(page_bytes)
+                    tmp_path = tmp.name
+                p_text = await run_in_threadpool(classifier._ocr_image, tmp_path)
+                if p_text and p_text.strip():
+                    page_texts.append(f"--- Page {i+1} ---\n" + p_text.strip())
+            except Exception as ocr_err:
+                logger.warning(f"Local OCR failed for page {i+1}: {ocr_err}")
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    try: os.remove(tmp_path)
+                    except Exception: pass
+        if page_texts:
+            text = "\n\n".join(page_texts)
+
+    if not text or not text.strip():
+        raise ValueError("No readable text or visual content could be extracted from the scanned PDF.")
     return text.strip(), len(pages)
 
 def cleanup_old_audio():
