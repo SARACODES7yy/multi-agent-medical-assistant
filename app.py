@@ -126,6 +126,27 @@ def downscale_image_file(path, max_dim=1600):
     except Exception as e:
         logger.warning(f"Image downscale skipped: {e}")
 
+
+async def describe_scanned_pdf(file_path, extra_context=""):
+    """Read a scanned (image-only) PDF via rasterize + Gemini vision.
+
+    Returns ``(text, page_count)``. Raises ``ValueError`` when vision is not
+    configured (GOOGLE_API_KEY missing) or nothing readable comes back.
+    """
+    if not (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")):
+        raise ValueError(
+            "This PDF looks scanned (no readable text) and image analysis needs "
+            "a Gemini key (GOOGLE_API_KEY is not configured on the server)."
+        )
+    from utils.pdf_extract import rasterize_pdf_pages
+    from agents.agent_decision import AgentConfig
+    pages = await run_in_threadpool(rasterize_pdf_pages, file_path)
+    classifier = AgentConfig.image_analyzer.image_classifier
+    text = await run_in_threadpool(classifier.describe_page_images, pages, extra_context)
+    if not text or not text.strip():
+        raise ValueError("No readable content found in the scanned PDF, even with image analysis.")
+    return text.strip(), len(pages)
+
 def cleanup_old_audio():
     """Deletes all .mp3 files in the uploads/speech folder every 5 minutes."""
     while True:
@@ -281,14 +302,23 @@ async def chat(
     # Build augmented text like /upload does (include patient context)
     if is_pdf_file:
         # PDF branch: extract text and synthesize via conversation agent.
-        # Both docling extraction and the LLM call are blocking: run them in a
-        # worker thread so this single-worker server keeps answering /health (502 guard).
+        # Both extraction and the LLM call are blocking: run them in a worker
+        # thread so this single-worker server keeps answering /health (502 guard).
         try:
             pdf_text, page_count = await run_in_threadpool(extract_pdf_text, file_path, config.api.max_pdf_pages)
         except ValueError as ve:
-            try: os.remove(file_path)
-            except Exception: pass
-            return JSONResponse(status_code=400, content={"status": "error", "agent": "System", "response": str(ve)})
+            if "No readable text" in str(ve):
+                # Image-only scan: rasterize pages and read them with vision.
+                try:
+                    pdf_text, page_count = await describe_scanned_pdf(file_path, query_text)
+                except ValueError as ve2:
+                    try: os.remove(file_path)
+                    except Exception: pass
+                    return JSONResponse(status_code=400, content={"status": "error", "agent": "System", "response": str(ve2)})
+            else:
+                try: os.remove(file_path)
+                except Exception: pass
+                return JSONResponse(status_code=400, content={"status": "error", "agent": "System", "response": str(ve)})
         except Exception as ve:
             try: os.remove(file_path)
             except Exception: pass
@@ -462,18 +492,32 @@ async def upload_file(
 
         if is_pdf_file:
             # --- PDF path: extract text, answer inline, index into RAG ---
-            # docling extraction + LLM call are blocking: threadpool keeps /health alive (502 guard).
+            # Extraction + LLM call are blocking: threadpool keeps /health alive (502 guard).
             try:
                 pdf_text, page_count = await run_in_threadpool(extract_pdf_text, file_path, config.api.max_pdf_pages)
             except ValueError as ve:
-                return JSONResponse(
-                    status_code=400,
-                    content={
-                        "status": "error",
-                        "agent": "System",
-                        "response": str(ve)
-                    }
-                )
+                if "No readable text" in str(ve):
+                    # Image-only scan: rasterize pages and read them with vision.
+                    try:
+                        pdf_text, page_count = await describe_scanned_pdf(file_path, text)
+                    except ValueError as ve2:
+                        return JSONResponse(
+                            status_code=400,
+                            content={
+                                "status": "error",
+                                "agent": "System",
+                                "response": str(ve2)
+                            }
+                        )
+                else:
+                    return JSONResponse(
+                        status_code=400,
+                        content={
+                            "status": "error",
+                            "agent": "System",
+                            "response": str(ve)
+                        }
+                    )
             except Exception as ve:
                 return JSONResponse(
                     status_code=400,

@@ -1,4 +1,4 @@
-"""Crash-proof worker for heavy native inference (RapidOCR / docling).
+"""Crash-proof worker for heavy native inference (RapidOCR).
 
 Render's 512MB instances get OOM-killed (or segfault) inside onnxruntime
 inference, which takes the whole web server down and surfaces as HTTP 502.
@@ -7,9 +7,10 @@ the child: the parent sees a failed result and falls back gracefully
 (vision LLM / friendly error) while the server keeps answering /health.
 
 Parent side:  run_isolated("ocr", [path]) -> {"texts": [...]} | None
-              run_isolated("pdf", [path]) -> {"text": str, "pages": int} | None
 Worker side:  python -m utils.isolated_worker ocr <path>
-              python -m utils.isolated_worker pdf <path>
+
+(PDF extraction no longer needs isolation: it uses pure-python pypdf, and
+scanned PDFs go through rasterize + Gemini vision.)
 """
 
 import json
@@ -49,15 +50,9 @@ def _worker_ocr(path):
     return {"texts": texts}
 
 
-def _worker_pdf(path):
-    from utils.pdf_extract import _convert_pdf_inproc
-    text, pages = _convert_pdf_inproc(path)
-    return {"text": text, "pages": pages}
-
-
 def main(argv):
     if len(argv) < 3:
-        print(json.dumps({"error": "usage: isolated_worker <ocr|pdf> <path>"}))
+        print(json.dumps({"error": "usage: isolated_worker ocr <path>"}))
         return 2
     task, path = argv[1], argv[2]
     if not os.path.exists(path):
@@ -66,8 +61,6 @@ def main(argv):
     try:
         if task == "ocr":
             out = _worker_ocr(path)
-        elif task == "pdf":
-            out = _worker_pdf(path)
         else:
             print(json.dumps({"error": f"unknown task: {task}"}))
             return 2

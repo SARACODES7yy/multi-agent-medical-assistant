@@ -54,3 +54,6 @@ pydub>=0.25.1
 # --- Utilities ---
 numpy>=1.26.0
 pillow>=11.0.0
+# --- PDF support (pure-python text pull + MuPDF rasterizer for scanned PDFs; no torch) ---
+pypdf>=4.0.0
+pymupdf>=1.24.0

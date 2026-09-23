@@ -20,6 +20,11 @@ def _get_ocr():
     return _ocr_engine
 
 
+def _has_vision_key():
+    """True when a Google/Gemini key is configured (real vision model available)."""
+    return bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"))
+
+
 class ClassificationDecision(TypedDict):
     """Output structure for the decision agent."""
     image_type: str
@@ -84,6 +89,15 @@ class ImageClassifier:
     def classify_image(self, image_path: str) -> str:
         """Classify the image as medical/non-medical and determine its type."""
         print(f"[ImageAnalyzer] Classifying image: {image_path}")
+
+        # With a real vision model available, read the image directly: local
+        # onnxruntime OCR has killed small containers, so skip it entirely.
+        if _has_vision_key():
+            try:
+                print("[ImageAnalyzer] Classifying via vision model (local OCR skipped)")
+                return self._classify_from_vision(image_path)
+            except Exception as e:
+                print(f"[ImageAnalyzer] Vision classification failed, trying OCR: {e}")
 
         ocr_text = self._ocr_image(image_path)
 
@@ -157,6 +171,15 @@ class ImageClassifier:
         Returns a structured triage note as JSON text.
         """
         print(f"[ImageAnalyzer] Extracting medical information from: {image_path}")
+
+        # With a real vision model available, read the image directly: local
+        # onnxruntime OCR has killed small containers, so skip it entirely.
+        if _has_vision_key():
+            try:
+                print("[ImageAnalyzer] Extracting via vision model (local OCR skipped)")
+                return self._extract_from_vision(image_path, extra_context)
+            except Exception as e:
+                print(f"[ImageAnalyzer] Vision extraction failed, trying OCR: {e}")
 
         ocr_text = self._ocr_image(image_path)
         print(f"[ImageAnalyzer] OCR extracted {len(ocr_text.strip())} chars -> using text model")
@@ -236,6 +259,41 @@ class ImageClassifier:
 
         response = self.vision_model.invoke([system_prompt, user_prompt])
         return response.content
+
+    def describe_page_images(self, pages, extra_context=""):
+        """Describe scanned-PDF pages (PNG bytes) via the vision model.
+
+        One vision call per page; results joined with page headers. Returns ""
+        on any failure (callers fall back to a clean error message).
+        """
+        if not pages:
+            return ""
+        system_prompt = SystemMessage(
+            content=(
+                "You are a medical information extraction assistant for a non-diagnostic healthcare "
+                "triage system. You organize and summarize text visible in medical document pages. "
+                "You never diagnose, prescribe treatment, or replace a qualified professional."
+            )
+        )
+        out = []
+        try:
+            import base64
+            for i, png in enumerate(pages):
+                data_url = "data:image/png;base64," + base64.b64encode(png).decode()
+                user_prompt = HumanMessage(content=[
+                    {"type": "text", "text": (
+                        f"This is page {i + 1} of an uploaded medical document. "
+                        "Transcribe the visible medical content (test names, values, dates, findings) "
+                        "as structured text. If the page is not a medical document, say so briefly.\n"
+                        f"Additional context from the user: {extra_context if extra_context else 'None'}"
+                    )},
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                ])
+                out.append(f"--- Page {i + 1} ---\n" + str(self.vision_model.invoke([system_prompt, user_prompt]).content))
+        except Exception as e:
+            print(f"[ImageAnalyzer] Page-vision description failed: {e}")
+            return ""
+        return "\n\n".join(out)
 
     # ------------------------------------------------------------------
     # Insight generation
