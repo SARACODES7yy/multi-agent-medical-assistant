@@ -55,17 +55,23 @@ class ImageClassifier:
         return f"data:{mime_type};base64,{base64_encoded_data}"
 
     def _ocr_image(self, image_path: str) -> str:
-        """Run RapidOCR (memoized) and return the extracted text joined by newlines."""
+        """Run RapidOCR in an isolated child process (memoized) and return text.
+
+        onnxruntime inference has OOM-killed small containers before; running
+        it out-of-process means a crash only yields empty text and the vision
+        fallback still answers. Returns "" on any worker failure.
+        """
         if image_path in self._ocr_cache:
             return self._ocr_cache[image_path]
 
         text = ""
         try:
-            engine = _get_ocr()
-            result = engine(image_path)
-            if result is not None and result.txts:
-                texts = [t if isinstance(t, str) else t[0] for t in result.txts]
-                text = "\n".join(texts)
+            import os as _os
+            from utils.isolated_worker import run_isolated
+            timeout = int(_os.getenv("OCR_TIMEOUT", "150"))
+            res = run_isolated("ocr", [image_path], timeout=timeout)
+            if res:
+                text = "\n".join(res.get("texts", []) or [])
         except Exception as e:
             print(f"[ImageAnalyzer] OCR failed: {e}")
 

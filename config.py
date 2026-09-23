@@ -244,9 +244,13 @@ def _vision_llm():
 class MedicalImageConfig:
     def __init__(self):
         self.ocr_llm = llm(temperature=0.1)
-        self.vision_llm = (openrouter_llm(temperature=0.1)
-                           if OPENROUTER_API_KEY
-                           else (groq_llm(temperature=0.1) if _GROQ_AVAILABLE and GROQ_API_KEY else _vision_llm()))
+        # Vision needs a genuinely vision-capable model: prefer Gemini when a
+        # Google key is configured (Groq's text-only models cannot read images).
+        _has_google_key = bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"))
+        self.vision_llm = (_vision_llm() if _has_google_key
+                           else (openrouter_llm(temperature=0.1)
+                                 if OPENROUTER_API_KEY
+                                 else (groq_llm(temperature=0.1) if _GROQ_AVAILABLE and GROQ_API_KEY else _vision_llm())))
         self.llm = self.ocr_llm
 
 

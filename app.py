@@ -69,12 +69,10 @@ config = Config()
 auth_manager = AuthManager()
 patient_rag = PatientRAG()
 db = get_db()
-try:
-    from agents.image_analysis_agent.image_classifier import _get_ocr
-    _get_ocr()
-    print("[pre-warm] RapidOCR engine initialized")
-except Exception as e:
-    print(f"[pre-warm] OCR not available: {e}")
+# NOTE: RapidOCR/docling are intentionally NOT pre-warmed here. Their
+# onnxruntime inference runs in an isolated child process per upload
+# (see utils/isolated_worker.py) so a crash/OOM can never kill this server,
+# and skipping the preload keeps boot memory low on small instances.
 
 # Initialize FastAPI app
 app = FastAPI(title="Multi-Agent Medical Chatbot", version="2.0")
