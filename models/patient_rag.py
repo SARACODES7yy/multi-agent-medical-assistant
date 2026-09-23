@@ -18,7 +18,10 @@ class PatientRAG:
 
     def __init__(self):
         self.collection_name = "patient_medical_records"
-        self.client = QdrantClient(path=config.rag.vector_local_path)
+        if config.rag.url and config.rag.api_key:
+            self.client = QdrantClient(url=config.rag.url, api_key=config.rag.api_key)
+        else:
+            self.client = QdrantClient(path=config.rag.vector_local_path)
         self.embedding_model = _get_embedding_model()
         self.embedding_dim = config.rag.embedding_dim
         self._ensure_collection()

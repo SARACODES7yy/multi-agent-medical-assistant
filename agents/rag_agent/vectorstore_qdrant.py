@@ -28,7 +28,10 @@ class VectorStore:
 
         # Use the singleton client instead of creating a new one
         # self.client = QdrantClientManager.get_client(config)
-        self.client = QdrantClient(path=self.vectorstore_local_path)
+        if config.rag.url and config.rag.api_key:
+            self.client = QdrantClient(url=config.rag.url, api_key=config.rag.api_key)
+        else:
+            self.client = QdrantClient(path=self.vectorstore_local_path)
 
     def _does_collection_exist(self) -> bool:
         """Check if the collection already exists in Qdrant."""
