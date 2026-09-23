@@ -10,7 +10,7 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-USE_SUPABASE = os.getenv("USE_SUPABASE", "false").lower() == "true"
+USE_SUPABASE = os.getenv("USE_SUPABASE", "true").lower() == "true"
 
 _TRIAGE_LIST_FIELDS = ("chief_complaints", "red_flags", "missing_info", "followup_questions", "tests")
 
@@ -471,8 +471,8 @@ class SupabaseDB(Database):
 
     def __init__(self):
         from supabase import create_client
-        self.url = os.getenv("SUPABASE_URL")
-        self.anon_key = os.getenv("SUPABASE_ANON_KEY")
+        self.url = os.getenv("SUPABASE_URL", "https://uzabcdtnqkcwavyjtujw.supabase.co")
+        self.anon_key = os.getenv("SUPABASE_ANON_KEY", "sb_publishable_6p4qWC6HA30yFgBL3aC5RA_n-kfqrfl")
         self.service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
         self.postgres_uri = os.getenv("SUPABASE_POSTGRES_URI")
         self.client = create_client(self.url, self.anon_key)

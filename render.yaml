@@ -6,6 +6,16 @@ services:
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
     envVars:
+      - key: USE_SUPABASE
+        value: "true"
+      - key: SUPABASE_URL
+        value: "https://uzabcdtnqkcwavyjtujw.supabase.co"
+      - key: SUPABASE_ANON_KEY
+        value: "sb_publishable_6p4qWC6HA30yFgBL3aC5RA_n-kfqrfl"
+      - key: QDRANT_URL
+        value: "https://171fd73f-b471-4181-9333-c05c52737545.eu-central-1-0.aws.cloud.qdrant.io"
+      - key: QDRANT_API_KEY
+        value: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIiwic3ViamVjdCI6ImFwaS1rZXk6MjA1NmU4NzUtOGIzOC00NzAyLWJkNTgtMWVhYzI1MDMwMTEyIn0.6OEmnvUmH3aC8HS2YatsQff5mhK9kCz6_r7U4DBVnrs"
       - key: GROQ_API_KEY
         sync: false
       - key: GOOGLE_API_KEY
@@ -14,7 +24,5 @@ services:
         sync: false
       - key: ELEVEN_LABS_API_KEY
         sync: false
-      - key: USE_SUPABASE
-        value: "false"
       - key: PORT
         value: "7860"

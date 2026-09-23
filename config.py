@@ -212,8 +212,8 @@ class RAGConfig:
         self.vector_local_path = os.path.join(_data_dir, "qdrant_db_v2")
         self.doc_local_path = os.path.join(_data_dir, "docs_db")
         self.parsed_content_dir = os.path.join(_data_dir, "parsed_docs")
-        self.url = os.getenv("QDRANT_URL")
-        self.api_key = os.getenv("QDRANT_API_KEY")
+        self.url = os.getenv("QDRANT_URL", "https://171fd73f-b471-4181-9333-c05c52737545.eu-central-1-0.aws.cloud.qdrant.io")
+        self.api_key = os.getenv("QDRANT_API_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIiwic3ViamVjdCI6ImFwaS1rZXk6MjA1NmU4NzUtOGIzOC00NzAyLWJkNTgtMWVhYzI1MDMwMTEyIn0.6OEmnvUmH3aC8HS2YatsQff5mhK9kCz6_r7U4DBVnrs")
         self.collection_name = "medical_assistance_rag"
         self.chunk_size = 512
         self.chunk_overlap = 50
