@@ -804,7 +804,11 @@ class SupabaseDB(Database):
 
 def get_db() -> Database:
     if USE_SUPABASE:
-        db = SupabaseDB()
+        try:
+            db = SupabaseDB()
+        except Exception as e:
+            logger.error("Supabase initialization failed: %s. Falling back to SQLiteDB.", e)
+            db = SQLiteDB()
     else:
         db = SQLiteDB()
     _seed_demo_user(db)
