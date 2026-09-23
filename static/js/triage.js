@@ -889,17 +889,44 @@ function renderStaffHistory(el) {
 function filterHistoryCodes() { var q = ($('#history-search') ? $('#history-search').value : '').toLowerCase(); $$('#history-codes .triage-history-code').forEach(function(c) { c.style.display = c.textContent.toLowerCase().indexOf(q) === -1 ? 'none' : ''; }); }
 
 /* ---------- Book Call ---------- */
+function getLocalDateStr(d) {
+  var y = d.getFullYear();
+  var m = String(d.getMonth() + 1).padStart(2, '0');
+  var day = String(d.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + day;
+}
+/* ---------- Book Call ---------- */
 function bindBookCall() {
   state.bookCallDoctor = '';
-  state.bookCallWeek = new Date(); state.bookCallWeek.setDate(state.bookCallWeek.getDate() - state.bookCallWeek.getDay() + 1);
+  var now = new Date();
+  var day = now.getDay();
+  var diff = now.getDate() - day + (day === 0 ? -6 : 1);
+  state.bookCallWeek = new Date(now.setDate(diff));
+  state.bookCallWeek.setHours(0,0,0,0);
   var el = $('#book-call-content'); if (!el) return;
   el.innerHTML = '<div class="triumph-booking-guide"><strong>How it works:</strong> Patients — pick a doctor and an available time slot to book a call. Doctors — set your availability below. All bookings appear in your bookings list below.</div><div class="triumph-booking-layout"><div class="triumph-booking-doctors"><h3><i class="fas fa-user-doctor me-2"></i>Doctors</h3><div id="triumph-book-call-doctors" style="max-height:520px;overflow-y:auto;"></div></div><div class="triumph-booking-main"><div class="triumph-booking-header"><h3><i class="fas fa-calendar-days me-2"></i>Availability</h3><div class="triumph-booking-week-nav"><button class="btn-outline btn-sm" onclick="shiftWeek(-1)"><i class="fas fa-chevron-left"></i></button> <span id="triumph-book-call-week-label" style="min-width:170px;text-align:center;"></span> <button class="btn-outline btn-sm" onclick="shiftWeek(1)"><i class="fas fa-chevron-right"></i></button></div></div><div id="triumph-book-call-calendar" class="triumph-booking-calendar" style="overflow-x:auto;"></div></div></div><div class="triumph-bookings-card triage-card"><div class="triumph-booking-header"><h3><i class="fas fa-list me-2"></i>My Bookings</h3></div><div id="triumph-book-call-bookings"></div></div>';
   loadDoctors();
 }
 function shiftWeek(n) { state.bookCallWeek.setDate(state.bookCallWeek.getDate() + n * 7); renderCalendar(); }
 async function loadDoctors() {
-  try { var d = await fetch('/api/doctor/doctors', { credentials: 'include' }); var j = await d.json(); var doctors = (j.status === 'ok' && j.doctors) ? j.doctors : []; var html = ''; doctors.forEach(function(doc) { html += '<div class="triumph-booking-doc' + (state.bookCallDoctor === doc.id ? ' is-active' : '') + '" data-id="' + esc(doc.id) + '" onclick="selectDoctor(\'' + esc(doc.id) + '\')"><div class="triumph-booking-doc-name">' + esc(doc.name || doc.email) + '</div><div class="triumph-booking-doc-qual">' + esc(doc.qualification || 'N/A') + '</div><div class="triumph-booking-doc-avail"><i class="fas fa-check-circle"></i> ' + (doc.status || 'active') + '</div></div>'; }); $('#triumph-book-call-doctors').innerHTML = html || '<div class="triumph-booking-empty"><i class="fas fa-user-doctor"></i><p>No doctors found.</p></div>'; } catch (e) { $('#triumph-book-call-doctors').innerHTML = '<div class="triumph-booking-empty"><p>Could not load doctors.</p></div>'; } }
-function selectDoctor(id) { state.bookCallDoctor = id; loadDoctors(); renderCalendar(); }
+  try {
+    var d = await fetch('/api/doctor/doctors', { credentials: 'include' });
+    var j = await d.json();
+    var doctors = (j.status === 'ok' && j.doctors) ? j.doctors : [];
+    if (!state.bookCallDoctor && doctors.length > 0) {
+      state.bookCallDoctor = doctors[0].id;
+    }
+    var html = '';
+    doctors.forEach(function(doc) {
+      html += '<div class="triumph-booking-doc' + (state.bookCallDoctor === doc.id ? ' is-active' : '') + '" data-id="' + esc(doc.id) + '" onclick="selectDoctor(\'' + esc(doc.id) + '\')"><div class="triumph-booking-doc-name">' + esc(doc.name || doc.email) + '</div><div class="triumph-booking-doc-qual">' + esc(doc.qualification || 'General Practitioner') + '</div><div class="triumph-booking-doc-avail"><i class="fas fa-check-circle"></i> ' + (doc.status || 'active') + '</div></div>';
+    });
+    $('#triumph-book-call-doctors').innerHTML = html || '<div class="triumph-booking-empty"><i class="fas fa-user-doctor"></i><p>No doctors found.</p></div>';
+    renderCalendar();
+  } catch (e) {
+    $('#triumph-book-call-doctors').innerHTML = '<div class="triumph-booking-empty"><p>Could not load doctors.</p></div>';
+  }
+}
+function selectDoctor(id) { state.bookCallDoctor = id; loadDoctors(); }
 function fmtDay(d) { return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()] + ' ' + (d.getMonth()+1) + '/' + d.getDate(); }
 function showConfirm(title, msg, onYes, onNo) {
   var overlay = document.createElement('div'); overlay.className = 'triumph-booking-confirm';
@@ -909,29 +936,122 @@ function showConfirm(title, msg, onYes, onNo) {
   $('#triumph-confirm-no').onclick = function() { overlay.remove(); };
 }
 async function renderCalendar() {
-  var el = $('#triumph-book-call-calendar'); if (!el || !state.bookCallDoctor) { if (el) el.innerHTML = '<div class="triumph-booking-empty"><p>Select a doctor to see availability.</p></div>'; return; }
+  var el = $('#triumph-book-call-calendar');
+  if (!el || !state.bookCallDoctor) {
+    if (el) el.innerHTML = '<div class="triumph-booking-empty"><p>Select a doctor to see availability.</p></div>';
+    return;
+  }
   var weekStart = new Date(state.bookCallWeek); weekStart.setHours(0,0,0,0);
+  var days = [];
   var html = '<table><tr><th>Time</th>';
-  for (var i = 0; i < 7; i++) { var d = new Date(weekStart); d.setDate(d.getDate() + i); html += '<th>' + fmtDay(d) + '</th>'; }
+  for (var i = 0; i < 7; i++) {
+    var d = new Date(weekStart); d.setDate(d.getDate() + i);
+    days.push(d);
+    html += '<th>' + fmtDay(d) + '</th>';
+  }
   html += '</tr>';
   try {
     var resp = await fetch('/api/doctor/availability?doctor_id=' + encodeURIComponent(state.bookCallDoctor), { credentials: 'include' });
-    var j = await resp.json(); var slots = (j.status === 'ok' && j.availability) ? j.availability : [];
-    var availMap = {}; slots.forEach(function(s) { var key = s.date + '|' + s.start_time; (availMap[key] = availMap[key] || []).push(s); });
+    var j = await resp.json();
+    var slots = (j.status === 'ok' && j.availability) ? j.availability : [];
+    
+    // Synthesize default weekday available slots (09:00, 10:00, 11:00, 14:00, 15:00, 16:00) if none created yet
+    if (!slots.length) {
+      days.forEach(function(d) {
+        if (d.getDay() >= 1 && d.getDay() <= 5) { // Mon-Fri
+          var dStr = getLocalDateStr(d);
+          ['09:00', '10:00', '11:00', '14:00', '15:00', '16:00'].forEach(function(st) {
+            slots.push({ id: 'default_' + dStr + '_' + st, doctor_id: state.bookCallDoctor, date: dStr, start_time: st, max_slots: 1 });
+          });
+        }
+      });
+    }
+
+    var availMap = {};
+    slots.forEach(function(s) {
+      var key = s.date + '|' + (s.start_time.length === 5 ? s.start_time : s.start_time.slice(0,5));
+      (availMap[key] = availMap[key] || []).push(s);
+    });
+    
     var bResp = await fetch('/api/call/bookings', { credentials: 'include' });
-    var bj = await bResp.json(); var bookings = (bj.status === 'ok' && bj.bookings) ? bj.bookings : [];
-    var bookMap = {}; bookings.forEach(function(b) { var k = b.scheduled_at.split('T')[0]; (bookMap[k] = bookMap[k] || []).push(b); });
+    var bj = await bResp.json();
+    var bookings = (bj.status === 'ok' && bj.bookings) ? bj.bookings : [];
+    var bookMap = {};
+    bookings.forEach(function(b) {
+      var k = b.scheduled_at.split('T')[0];
+      (bookMap[k] = bookMap[k] || []).push(b);
+    });
+
     var hours = ['08','09','10','11','12','13','14','15','16','17','18','19','20'];
     hours.forEach(function(h) {
       html += '<tr><td style="padding:4px;text-align:left;font-weight:600;font-size:12px;">' + h + ':00</td>';
-      for (var i = 0; i < 7; i++) { var d = new Date(weekStart); d.setDate(d.getDate() + i); var dateStr = d.toISOString().slice(0,10); var avail = availMap[dateStr + '|' + h + ':00']; var bs = bookMap[dateStr] || []; var booked = bs.filter(function(b) { return b.scheduled_at.slice(0,13) === dateStr + 'T' + h; }); var slot = avail ? avail[0] : null; var isSelf = slot && slot.doctor_id === state.bookCallDoctor; var cellCls = booked.length ? 'triumph-booking-slot-booked' : (isSelf ? 'triumph-booking-slot-self' : (avail ? 'triumph-booking-slot-available' : 'triumph-booking-slot-full')); var btnTxt = booked.length ? booked[0].status.charAt(0).toUpperCase() + booked[0].status.slice(1, 8) : (isSelf ? 'Mine' : (avail ? 'Book' : 'Full')); var onclick = booked.length || !avail ? '' : (state.role === 'patient' ? "showConfirm('Book Call', 'Book with " + esc(slot ? slot.doctor_name || 'doctor' : 'doctor') + " on ' + fmtDay(new Date(dateStr + 'T' + h + ':00')) + ' at " + h + ":00?', function(){ bookCallDoctorSlot('" + state.bookCallDoctor + "','" + dateStr + "','" + h + ":00')" + "')" : "toggleDocAvailability('" + state.bookCallDoctor + "','" + dateStr + "','" + h + ":00')"); html += '<td style="padding:4px;"><button class="triumph-booking-slot-btn ' + cellCls + '" onclick="' + onclick + '">' + btnTxt + '</button></td>'; }
+      days.forEach(function(d) {
+        var dateStr = getLocalDateStr(d);
+        var timeKey = h + ':00';
+        var avail = availMap[dateStr + '|' + timeKey];
+        var bs = bookMap[dateStr] || [];
+        var booked = bs.filter(function(b) { return b.scheduled_at.slice(0,13) === dateStr + 'T' + h; });
+        var slot = avail ? avail[0] : null;
+        var cellCls = booked.length ? 'triumph-booking-slot-booked' : (avail ? 'triumph-booking-slot-available' : 'triumph-booking-slot-full');
+        var btnTxt = booked.length ? (booked[0].status.charAt(0).toUpperCase() + booked[0].status.slice(1, 8)) : (avail ? 'Book' : 'Full');
+        var onclick = booked.length ? '' : (state.role === 'patient' || !state.role || state.role === 'guest' ?
+          (avail ? "showConfirm('Book Call', 'Book call with doctor on " + esc(fmtDay(d)) + " at " + h + ":00?', function(){ bookCallDoctorSlot('" + state.bookCallDoctor + "','" + dateStr + "','" + timeKey + "'); })" : "") :
+          "toggleDocAvailability('" + state.bookCallDoctor + "','" + dateStr + "','" + timeKey + "')"
+        );
+        html += '<td style="padding:4px;"><button class="triumph-booking-slot-btn ' + cellCls + '" ' + (onclick ? 'onclick="' + onclick + '"' : '') + '>' + btnTxt + '</button></td>';
+      });
       html += '</tr>';
     });
-  } catch (e) {}
-  html += '</table>'; el.innerHTML = html; $('#triumph-book-call-week-label').textContent = fmtDay(weekStart) + ' — ' + fmtDay(new Date(weekStart.getTime() + 6*86400000));
+  } catch (e) {
+    console.error("Calendar render error:", e);
+  }
+  html += '</table>';
+  el.innerHTML = html;
+  var weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 6);
+  $('#triumph-book-call-week-label').textContent = fmtDay(weekStart) + ' — ' + fmtDay(weekEnd);
 }
-function bookCallDoctorSlot(doctorId, date, time) { fetch('/api/doctor/availability?doctor_id=' + encodeURIComponent(doctorId), { credentials: 'include' }).then(function(r){ return r.json(); }).then(function(j) { var slots = (j.status === 'ok' && j.availability) ? j.availability : []; var slot = slots.find(function(s) { return s.date === date && s.start_time === time; }); if (slot) { fetch('/api/call/book', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({doctor_id: doctorId, availability_id: slot.id, notes: ''}), credentials: 'include' }).then(function(r) { return r.json(); }).then(function(j) { if (j.status === 'ok') { loadBookings(); renderCalendar(); } else { alert('Booking failed: ' + (j.detail || 'Unknown error')); } }); } }); }
-async function toggleDocAvailability(doctorId, date, time) { try { var j = await fetch('/api/doctor/availability', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({date: date, start_time: time, end_time: time+':30', max_slots: 1}), credentials: 'include' }).then(function(r){ return r.json(); }); if (j.status === 'ok') renderCalendar(); } catch (e) {} }
+function bookCallDoctorSlot(doctorId, date, time) {
+  fetch('/api/doctor/availability?doctor_id=' + encodeURIComponent(doctorId), { credentials: 'include' })
+    .then(function(r){ return r.json(); })
+    .then(function(j) {
+      var slots = (j.status === 'ok' && j.availability) ? j.availability : [];
+      var slot = slots.find(function(s) { return s.date === date && (s.start_time === time || s.start_time.startsWith(time)); });
+      var doBook = function(availId) {
+        fetch('/api/call/book', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({doctor_id: doctorId, availability_id: availId, notes: ''}),
+          credentials: 'include'
+        }).then(function(r) { return r.json(); }).then(function(res) {
+          if (res.status === 'ok') {
+            loadBookings();
+            renderCalendar();
+          } else {
+            alert('Booking failed: ' + (res.detail || 'Unknown error'));
+          }
+        });
+      };
+      if (slot) {
+        doBook(slot.id);
+      } else {
+        fetch('/api/doctor/availability', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({doctor_id: doctorId, date: date, start_time: time, end_time: time + ':30', max_slots: 1}),
+          credentials: 'include'
+        }).then(function(r){ return r.json(); }).then(function(j2) {
+          if (j2.status === 'ok' && j2.availability) {
+            doBook(j2.availability.id);
+          } else {
+            alert('Booking failed: Could not create slot.');
+          }
+        }).catch(function(err) {
+          alert('Booking error: ' + err.message);
+        });
+      }
+    });
+}
+async function toggleDocAvailability(doctorId, date, time) { try { var j = await fetch('/api/doctor/availability', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({doctor_id: doctorId, date: date, start_time: time, end_time: time+':30', max_slots: 1}), credentials: 'include' }).then(function(r){ return r.json(); }); if (j.status === 'ok') renderCalendar(); } catch (e) {} }
 async function loadBookings() { try { var d = await fetch('/api/call/bookings', { credentials: 'include' }); var j = await d.json(); var bookings = (j.status === 'ok' && j.bookings) ? j.bookings : []; var html = ''; if (!bookings.length) { html = '<div class="triumph-booking-empty"><i class="fas fa-list"></i><p>No bookings yet.</p></div>'; } else { html = '<table class="triumph-bookings-table"><tr><th>Doctor</th><th>Date/Time</th><th>Status</th><th></th></tr>'; bookings.forEach(function(b) { var statusCls = 'triumph-status-' + (b.status || 'requested'); html += '<tr><td>' + esc(b.doctor_name || b.doctor_id) + '</td><td>' + esc(b.scheduled_at) + '</td><td><span class="triumph-status-badge ' + statusCls + '">' + esc(b.status || 'unknown') + '</span></td><td>' + (b.status === 'requested' && state.role === 'patient' ? '<button class="btn-outline btn-sm" onclick="updateBookingStatus(\'' + b.id + '\',\'cancelled\')">Cancel</button>' : '') + '</td></tr>'; }); html += '</table>'; } $('#triumph-book-call-bookings').innerHTML = html; } catch (e) { $('#triumph-book-call-bookings').innerHTML = '<div class="triumph-booking-empty"><p>Could not load bookings.</p></div>'; } }
 async function updateBookingStatus(bookingId, status) { try { var j = await fetch('/api/call/booking/' + bookingId, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({status: status}), credentials: 'include' }).then(function(r){ return r.json(); }); if (j.status === 'success') { loadBookings(); renderCalendar(); } } catch (e) {} }
 
