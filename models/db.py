@@ -99,6 +99,24 @@ class Database:
     def update_triage_session_status(self, session_id, status, follow_up_date=None):
         raise NotImplementedError
 
+    def get_doctors(self):
+        raise NotImplementedError
+
+    def get_availability(self, doctor_id):
+        raise NotImplementedError
+
+    def add_availability(self, doctor_id, date, start_time, end_time, max_slots=1):
+        raise NotImplementedError
+
+    def book_call(self, patient_id, doctor_id, availability_id, scheduled_at, notes=""):
+        raise NotImplementedError
+
+    def get_bookings(self, user_id, role):
+        raise NotImplementedError
+
+    def update_booking_status(self, booking_id, status):
+        raise NotImplementedError
+
 
 class SQLiteDB(Database):
     """SQLite backend (default, zero external dependencies)."""
@@ -402,6 +420,51 @@ class SQLiteDB(Database):
         conn.commit(); conn.close()
         return cur.rowcount > 0
 
+    def get_doctors(self):
+        conn = self._connect()
+        rows = conn.execute("SELECT u.id, u.email, u.role, u.status, u.created_at, p.name, p.qualification FROM users u LEFT JOIN profiles p ON p.user_id=u.id WHERE u.role='doctor' ORDER BY u.created_at DESC").fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def get_availability(self, doctor_id):
+        conn = self._connect()
+        rows = conn.execute("SELECT * FROM doctor_availability WHERE doctor_id=? ORDER BY date, start_time", (doctor_id,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def add_availability(self, doctor_id, date, start_time, end_time, max_slots=1):
+        avail_id = str(uuid.uuid4())
+        now = self._now()
+        conn = self._connect()
+        conn.execute("INSERT INTO doctor_availability (id,doctor_id,date,start_time,end_time,max_slots,created_at) VALUES (?,?,?,?,?,?,?)",
+                     (avail_id, doctor_id, date, start_time, end_time, max_slots, now))
+        conn.commit(); conn.close()
+        return {"id": avail_id, "doctor_id": doctor_id, "date": date, "start_time": start_time, "end_time": end_time, "max_slots": max_slots, "created_at": now}
+
+    def book_call(self, patient_id, doctor_id, availability_id, scheduled_at, notes=""):
+        booking_id = str(uuid.uuid4())
+        now = self._now()
+        conn = self._connect()
+        conn.execute("INSERT INTO call_bookings (id,patient_id,doctor_id,availability_id,scheduled_at,status,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                     (booking_id, patient_id, doctor_id, availability_id, scheduled_at, "requested", notes, now, now))
+        conn.commit(); conn.close()
+        return {"id": booking_id, "patient_id": patient_id, "doctor_id": doctor_id, "availability_id": availability_id, "scheduled_at": scheduled_at, "status": "requested", "notes": notes, "created_at": now, "updated_at": now}
+
+    def get_bookings(self, user_id, role):
+        conn = self._connect()
+        if role == 'doctor':
+            rows = conn.execute("SELECT cb.*, u.name as patient_name, u.email as patient_email FROM call_bookings cb LEFT JOIN users u ON u.id=cb.patient_id WHERE cb.doctor_id=? ORDER BY cb.scheduled_at DESC", (user_id,)).fetchall()
+        else:
+            rows = conn.execute("SELECT cb.*, u.name as doctor_name, u.email as doctor_email FROM call_bookings cb LEFT JOIN users u ON u.id=cb.doctor_id WHERE cb.patient_id=? ORDER BY cb.scheduled_at DESC", (user_id,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def update_booking_status(self, booking_id, status):
+        conn = self._connect()
+        cur = conn.execute("UPDATE call_bookings SET status=?, updated_at=? WHERE id=?", (status, self._now(), booking_id))
+        conn.commit(); conn.close()
+        return cur.rowcount > 0
+
 
 class SupabaseDB(Database):
     """Supabase backend (requires SUPABASE_URL + keys in .env)."""
@@ -483,6 +546,24 @@ class SupabaseDB(Database):
             THEN CREATE POLICY "triage_sessions_update" ON triage_sessions FOR UPDATE USING (true); END IF;
             IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'triage_sessions'::regclass AND polname = 'triage_sessions_delete')
             THEN CREATE POLICY "triage_sessions_delete" ON triage_sessions FOR DELETE USING (true); END IF;
+            ALTER TABLE doctor_availability ENABLE ROW LEVEL SECURITY;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'doctor_availability'::regclass AND polname = 'doctor_availability_select')
+            THEN CREATE POLICY "doctor_availability_select" ON doctor_availability FOR SELECT USING (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'doctor_availability'::regclass AND polname = 'doctor_availability_insert')
+            THEN CREATE POLICY "doctor_availability_insert" ON doctor_availability FOR INSERT WITH CHECK (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'doctor_availability'::regclass AND polname = 'doctor_availability_update')
+            THEN CREATE POLICY "doctor_availability_update" ON doctor_availability FOR UPDATE USING (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'doctor_availability'::regclass AND polname = 'doctor_availability_delete')
+            THEN CREATE POLICY "doctor_availability_delete" ON doctor_availability FOR DELETE USING (true); END IF;
+            ALTER TABLE call_bookings ENABLE ROW LEVEL SECURITY;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'call_bookings'::regclass AND polname = 'call_bookings_select')
+            THEN CREATE POLICY "call_bookings_select" ON call_bookings FOR SELECT USING (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'call_bookings'::regclass AND polname = 'call_bookings_insert')
+            THEN CREATE POLICY "call_bookings_insert" ON call_bookings FOR INSERT WITH CHECK (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'call_bookings'::regclass AND polname = 'call_bookings_update')
+            THEN CREATE POLICY "call_bookings_update" ON call_bookings FOR UPDATE USING (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'call_bookings'::regclass AND polname = 'call_bookings_delete')
+            THEN CREATE POLICY "call_bookings_delete" ON call_bookings FOR DELETE USING (true); END IF;
         END $$;
         """
 
@@ -658,6 +739,66 @@ class SupabaseDB(Database):
             return bool(r and r.data)
         except Exception as e:
             logger.error(f"Supabase update_triage_session_status failed: {e}")
+            return False
+
+    def get_doctors(self):
+        try:
+            r = self.client.table("users").select("*, profiles(name)").eq("role","doctor").execute()
+            doctors = []
+            for d in (r.data if r and r.data else []):
+                d["name"] = (d.get("profiles") or {}).get("name", "")
+                d.pop("profiles", None)
+                doctors.append(d)
+            return doctors
+        except Exception as e:
+            logger.error(f"Supabase get_doctors failed: {e}")
+            return []
+
+    def get_availability(self, doctor_id):
+        try:
+            r = self.client.table("doctor_availability").select("*").eq("doctor_id", doctor_id).order("date").execute()
+            return r.data if r and r.data else []
+        except Exception as e:
+            logger.error(f"Supabase get_availability failed: {e}")
+            return []
+
+    def add_availability(self, doctor_id, date, start_time, end_time, max_slots=1):
+        try:
+            avail_id = str(uuid.uuid4())
+            now = self._now()
+            r = self.client.table("doctor_availability").insert({"id": avail_id, "doctor_id": doctor_id, "date": date, "start_time": start_time, "end_time": end_time, "max_slots": max_slots, "created_at": now}).execute()
+            return r.data[0] if r and r.data and len(r.data) > 0 else None
+        except Exception as e:
+            logger.error(f"Supabase add_availability failed: {e}")
+            return None
+
+    def book_call(self, patient_id, doctor_id, availability_id, scheduled_at, notes=""):
+        try:
+            booking_id = str(uuid.uuid4())
+            now = self._now()
+            r = self.client.table("call_bookings").insert({"id": booking_id, "patient_id": patient_id, "doctor_id": doctor_id, "availability_id": availability_id, "scheduled_at": scheduled_at, "status": "requested", "notes": notes, "created_at": now, "updated_at": now}).execute()
+            return r.data[0] if r and r.data and len(r.data) > 0 else None
+        except Exception as e:
+            logger.error(f"Supabase book_call failed: {e}")
+            return None
+
+    def get_bookings(self, user_id, role):
+        try:
+            if role == 'doctor':
+                r = self.client.table("call_bookings").select("*").eq("doctor_id", user_id).order("scheduled_at", desc=True).execute()
+            else:
+                r = self.client.table("call_bookings").select("*").eq("patient_id", user_id).order("scheduled_at", desc=True).execute()
+            return r.data if r and r.data else []
+        except Exception as e:
+            logger.error(f"Supabase get_bookings failed: {e}")
+            return []
+
+    def update_booking_status(self, booking_id, status):
+        try:
+            r = self.client.table("call_bookings").update({"status": status, "updated_at": self._now()}).eq("id", booking_id).execute()
+            return bool(r and r.data)
+        except Exception as e:
+            logger.error(f"Supabase update_booking_status failed: {e}")
             return False
 
 

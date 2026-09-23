@@ -845,6 +845,84 @@ async def update_checkup(checkup_id: str, request: Request, session_id: Optional
         raise HTTPException(status_code=404, detail="Checkup not found")
     return {"status": "success"}
 
+@app.get("/api/doctor/doctors")
+def get_doctors(session_id: Optional[str] = Cookie(None)):
+    """List doctors (role=doctor) with profile name."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    doctors = db.get_doctors()
+    return {"status": "ok", "doctors": doctors}
+
+@app.get("/api/doctor/availability")
+def get_availability(doctor_id: str, session_id: Optional[str] = Cookie(None)):
+    """List availability slots for a doctor."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    slots = db.get_availability(doctor_id)
+    return {"status": "ok", "availability": slots}
+
+@app.post("/api/doctor/availability")
+async def add_availability(request: Request, session_id: Optional[str] = Cookie(None)):
+    """Doctor/nurse adds an available time slot."""
+    payload = verify_session_cookie(session_id)
+    if not payload or payload["role"] not in ("doctor", "nurse"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    body = await request.json()
+    doctor_id = payload["user_id"]
+    date = body.get("date")
+    start_time = body.get("start_time")
+    end_time = body.get("end_time")
+    max_slots = body.get("max_slots", 1)
+    if not date or not start_time or not end_time:
+        raise HTTPException(status_code=400, detail="date, start_time, end_time required")
+    slot = db.add_availability(doctor_id, date, start_time, end_time, max_slots)
+    if not slot:
+        raise HTTPException(status_code=500, detail="Failed to add availability")
+    return {"status": "ok", "availability": slot}
+
+@app.post("/api/call/book")
+async def book_call(request: Request, session_id: Optional[str] = Cookie(None)):
+    """Patient books a call against an availability slot."""
+    payload = verify_session_cookie(session_id)
+    if not payload or payload["role"] != "patient":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    body = await request.json()
+    doctor_id = body.get("doctor_id")
+    availability_id = body.get("availability_id")
+    notes = body.get("notes", "")
+    if not availability_id:
+        raise HTTPException(status_code=400, detail="availability_id required")
+    booking = db.book_call(payload["user_id"], doctor_id, availability_id, notes)
+    if not booking:
+        raise HTTPException(status_code=500, detail="Failed to book call")
+    return {"status": "ok", "booking": booking}
+
+@app.get("/api/call/bookings")
+def get_bookings(session_id: Optional[str] = Cookie(None)):
+    """List bookings for the logged-in user (patient: theirs; doctor: theirs)."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    bookings = db.get_bookings(payload["user_id"], payload["role"])
+    return {"status": "ok", "bookings": bookings}
+
+@app.patch("/api/call/booking/{booking_id}")
+async def update_booking(booking_id: str, request: Request, session_id: Optional[str] = Cookie(None)):
+    """Doctor/nurse confirms a booking; patient cancels their own."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    body = await request.json()
+    status = body.get("status")
+    if status not in ("confirmed", "completed", "cancelled"):
+        raise HTTPException(status_code=400, detail="Invalid status")
+    ok = db.update_booking_status(booking_id, status)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    return {"status": "success"}
+
 @app.put("/api/profile")
 async def update_profile(request: Request, session_id: Optional[str] = Cookie(None)):
     """Patient updates their own medical profile; re-indexes RAG."""

@@ -119,6 +119,7 @@ function init() {
   bindDropzone();
   bindGenerate();
   bindActions();
+  bindBookCall();
   bindThemeLogout();
   updateBadge();
   renderHeroStats();
@@ -868,6 +869,46 @@ function renderStaffHistory(el) {
 }
 function filterHistoryCodes() { var q = ($('#history-search') ? $('#history-search').value : '').toLowerCase(); $$('#history-codes .triage-history-code').forEach(function(c) { c.style.display = c.textContent.toLowerCase().indexOf(q) === -1 ? 'none' : ''; }); }
 
+/* ---------- Book Call ---------- */
+function bindBookCall() {
+  state.bookCallDoctor = '';
+  state.bookCallWeek = new Date(); state.bookCallWeek.setDate(state.bookCallWeek.getDate() - state.bookCallWeek.getDay() + 1);
+  var el = $('#book-call-content'); if (!el) return;
+  el.innerHTML = '<div style="display:flex;gap:14px;"><div style="width:220px;"><div class="triage-card-head"><h3><i class="fas fa-user-doctor me-2"></i>Doctors</h3></div><div id="book-call-doctors" style="max-height:500px;overflow-y:auto;"></div></div><div style="flex:1;"><div class="triage-card-head"><h3><i class="fas fa-calendar-days me-2"></i>Availability</h3><div class="triage-filters" style="margin-bottom:8px;"><button class="btn-outline btn-sm" onclick="shiftWeek(-1)"><i class="fas fa-chevron-left"></i></button> <span id="book-call-week-label" style="min-width:160px;text-align:center;"></span> <button class="btn-outline btn-sm" onclick="shiftWeek(1)"><i class="fas fa-chevron-right"></i></button></div><div id="book-call-calendar" style="overflow-x:auto;"></div></div></div><div class="triage-card" style="margin-top:10px;"><div class="triage-card-head"><h3><i class="fas fa-list me-2"></i>My Bookings</h3></div><div id="book-call-bookings"></div></div>';
+  loadDoctors();
+}
+function shiftWeek(n) { state.bookCallWeek.setDate(state.bookCallWeek.getDate() + n * 7); renderCalendar(); }
+async function loadDoctors() {
+  try { var d = await fetch('/api/doctor/doctors', { credentials: 'include' }); var j = await d.json(); var doctors = (j.status === 'ok' && j.doctors) ? j.doctors : []; var html = ''; doctors.forEach(function(doc) { html += '<div class="triage-booking-doc' + (state.bookCallDoctor === doc.id ? ' is-active' : '') + '" data-id="' + esc(doc.id) + '" onclick="selectDoctor(\'' + esc(doc.id) + '\')"><div class="triage-badge triage-badge-risk-' + (doc.id ? 'standard' : 'routine') + '" style="cursor:pointer;">' + esc(doc.name || doc.email) + '</div><div class="triage-muted" style="font-size:11px;">' + esc(doc.qualification || '') + '</div></div>'; }); $('#book-call-doctors').innerHTML = html || '<div class="triage-empty"><i class="fas fa-user-doctor"></i><p>No doctors found.</p></div>'; } catch (e) { $('#book-call-doctors').innerHTML = '<div class="triage-empty"><p>Could not load doctors.</p></div>'; } }
+function selectDoctor(id) { state.bookCallDoctor = id; loadDoctors(); renderCalendar(); }
+function fmtDay(d) { return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()] + ' ' + (d.getMonth()+1) + '/' + d.getDate(); }
+async function renderCalendar() {
+  var el = $('#book-call-calendar'); if (!el || !state.bookCallDoctor) { if (el) el.innerHTML = '<div class="triage-empty"><p>Select a doctor.</p></div>'; return; }
+  var weekStart = new Date(state.bookCallWeek); weekStart.setHours(0,0,0,0);
+  var html = '<table style="width:100%;border-collapse:collapse;font-size:12px;"><tr><th style="padding:4px;text-align:left;">Time</th>';
+  for (var i = 0; i < 7; i++) { var d = new Date(weekStart); d.setDate(d.getDate() + i); html += '<th style="padding:4px;text-align:center;">' + fmtDay(d) + '</th>'; }
+  html += '</tr>';
+  try {
+    var resp = await fetch('/api/doctor/availability?doctor_id=' + encodeURIComponent(state.bookCallDoctor), { credentials: 'include' });
+    var j = await resp.json(); var slots = (j.status === 'ok' && j.availability) ? j.availability : [];
+    var availMap = {}; slots.forEach(function(s) { var key = s.date + '|' + s.start_time; (availMap[key] = availMap[key] || []).push(s); });
+    var bResp = await fetch('/api/call/bookings', { credentials: 'include' });
+    var bj = await bResp.json(); var bookings = (bj.status === 'ok' && bj.bookings) ? bj.bookings : [];
+    var bookMap = {}; bookings.forEach(function(b) { var k = b.scheduled_at.split('T')[0]; (bookMap[k] = bookMap[k] || []).push(b); });
+    var hours = ['08','09','10','11','12','13','14','15','16','17','18','19','20'];
+    hours.forEach(function(h) {
+      html += '<tr><td style="padding:3px;text-align:left;font-weight:600;">' + h + ':00</td>';
+      for (var i = 0; i < 7; i++) { var d = new Date(weekStart); d.setDate(d.getDate() + i); var dateStr = d.toISOString().slice(0,10); var avail = availMap[dateStr + '|' + h + ':00']; var bs = bookMap[dateStr] || []; var booked = bs.filter(function(b) { return b.scheduled_at.slice(0,13) === dateStr + 'T' + h; }); var cellCls = booked.length ? 'triage-slot-booked' : (avail ? 'triage-slot-available' : ''); var btnTxt = booked.length ? booked.map(function(b){return b.status}).join(',') : (avail ? 'Book' : ''); var onclick = booked.length ? '' : (state.role === 'patient' ? "bookCallDoctorSlot('" + state.bookCallDoctor + "','" + dateStr + "','" + h + ":00')" : "toggleDocAvailability('" + state.bookCallDoctor + "','" + dateStr + "','" + h + ":00')"); html += '<td style="padding:3px;text-align:center;"><button class="triage-btn ' + cellCls + '" style="font-size:11px;padding:2px 6px;" onclick="' + onclick + '">' + btnTxt + '</button></td>'; }
+      html += '</tr>';
+    });
+  } catch (e) {}
+  html += '</table>'; el.innerHTML = html; $('#book-call-week-label').textContent = fmtDay(weekStart) + ' \u2014 ' + fmtDay(new Date(weekStart.getTime() + 6*86400000));
+}
+function bookCallDoctorSlot(doctorId, date, time) { fetch('/api/doctor/availability?doctor_id=' + encodeURIComponent(doctorId), { credentials: 'include' }).then(function(r){ return r.json(); }).then(function(j) { var slots = (j.status === 'ok' && j.availability) ? j.availability : []; var slot = slots.find(function(s) { return s.date === date && s.start_time === time; }); if (slot) { fetch('/api/call/book', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({doctor_id: doctorId, availability_id: slot.id, notes: ''}), credentials: 'include' }).then(function(r) { return r.json(); }).then(function(j) { if (j.status === 'ok') { loadBookings(); renderCalendar(); } }); } }); }
+async function toggleDocAvailability(doctorId, date, time) { try { var j = await fetch('/api/doctor/availability', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({date: date, start_time: time, end_time: time+':30', max_slots: 1}), credentials: 'include' }).then(function(r){ return r.json(); }); if (j.status === 'ok') renderCalendar(); } catch (e) {} }
+async function loadBookings() { try { var d = await fetch('/api/call/bookings', { credentials: 'include' }); var j = await d.json(); var bookings = (j.status === 'ok' && j.bookings) ? j.bookings : []; var html = ''; if (!bookings.length) { html = '<div class="triage-empty"><i class="fas fa-list"></i><p>No bookings yet.</p></div>'; } else { html = '<table style="width:100%;font-size:12px;"><tr><th>Doctor</th><th>Date/Time</th><th>Status</th><th></th></tr>'; bookings.forEach(function(b) { html += '<tr><td>' + esc(b.doctor_name || b.doctor_id) + '</td><td>' + esc(b.scheduled_at) + '</td><td><span class="triage-badge triage-badge-status">' + esc(b.status) + '</span></td><td>' + (b.status === 'requested' && state.role === 'patient' ? '<button class="btn-outline btn-sm" onclick="updateBookingStatus(\'' + b.id + '\',\'cancelled\')">Cancel</button>' : '') + '</td></tr>'; }); html += '</table>'; } $('#book-call-bookings').innerHTML = html; } catch (e) { $('#book-call-bookings').innerHTML = '<div class="triage-empty"><p>Could not load bookings.</p></div>'; } }
+async function updateBookingStatus(bookingId, status) { try { var j = await fetch('/api/call/booking/' + bookingId, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({status: status}), credentials: 'include' }).then(function(r){ return r.json(); }); if (j.status === 'success') { loadBookings(); renderCalendar(); } } catch (e) {} }
+
 /* ---------- Demo seeds ---------- */
 function seedDemo() {
   if (state.seedLoaded) return; state.seedLoaded = true; lsSet('triage.demoLoaded.' + state.role, true);
@@ -907,6 +948,7 @@ function switchTab(name) {
   if (name === 'analytics') renderAnalytics();
   if (name === 'audit') renderAudit();
   if (name === 'history') renderHistory();
+  if (name === 'book-call') { loadDoctors(); loadBookings(); }
 }
 function onFacilityChange(v) { state.facility = v; state.scenario = ($('#scenario') ? $('#scenario').value : ''); populateScenarioSelect(); }
 function resetIntake() { if ($('#symptoms')) $('#symptoms').value = ''; if ($('#anon-code')) $('#anon-code').value = ''; if ($('#consent')) $('#consent').checked = false; if ($('#extracts')) $('#extracts').innerHTML = ''; if ($('#upload-area')) $('#upload-area').style.display = 'none'; state.extractedTests = []; state.note = null; state.session = null; $('#note-result').innerHTML = ''; $('#note-empty').style.display = ''; $('#note-loading').style.display = 'none'; $('#note-result').style.display = 'none'; $('#new-intake-btn').style.display = 'none'; $('#open-queue-btn').style.display = 'none'; toggleGenerate(); }

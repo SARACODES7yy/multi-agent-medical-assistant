@@ -91,3 +91,29 @@ CREATE TABLE IF NOT EXISTS triage_sessions (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS doctor_availability (
+    id TEXT PRIMARY KEY,
+    doctor_id TEXT NOT NULL,
+    date DATE NOT NULL,
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL,
+    max_slots INTEGER DEFAULT 1,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (doctor_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS call_bookings (
+    id TEXT PRIMARY KEY,
+    patient_id TEXT NOT NULL,
+    doctor_id TEXT NOT NULL,
+    availability_id TEXT,
+    scheduled_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'requested' CHECK(status IN ('requested','confirmed','completed','cancelled')),
+    notes TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (patient_id) REFERENCES users(id),
+    FOREIGN KEY (doctor_id) REFERENCES users(id),
+    FOREIGN KEY (availability_id) REFERENCES doctor_availability(id)
+);

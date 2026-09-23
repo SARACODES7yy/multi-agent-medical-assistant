@@ -89,6 +89,7 @@
             {% if role == 'patient' %}
             <button class="triage-tab" data-tab="history" role="tab"><i class="fas fa-history me-1"></i>My Follow-ups</button>
             {% endif %}
+            <button class="triage-tab" data-tab="book-call" role="tab"><i class="fas fa-phone me-1"></i>Book Call</button>
             <button class="triage-tab" data-tab="about" role="tab"><i class="fas fa-circle-info me-1"></i>About &amp; Privacy</button>
         </div>
 
@@ -279,6 +280,17 @@
             <div id="history-content"></div>
         </section>
         {% endif %}
+
+        <!-- BOOK CALL -->
+        <section class="triage-tabpanel" id="tab-book-call">
+            <div class="triage-card">
+                <div class="triage-card-head">
+                    <h3><i class="fas fa-phone me-2 triage-teal"></i>Book a Call</h3>
+                    <span class="triage-card-sub">Patients: choose a doctor and an available slot. Doctors: set your availability and manage bookings.</span>
+                </div>
+                <div id="book-call-content"></div>
+            </div>
+        </section>
 
         <!-- ABOUT -->
         <section class="triage-tabpanel" id="tab-about">
