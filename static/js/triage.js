@@ -362,11 +362,13 @@ function handleFile(file) {
     .then(function(r) {
       if (!r.ok) {
         return r.json().then(function(errData) {
-          var detail = (errData && (errData.response || errData.detail || errData.message)) || ('HTTP ' + r.status);
+          var detail = (errData && (errData.response || errData.detail || errData.message)) || ('Server returned error HTTP ' + r.status);
           throw new Error(detail);
         }).catch(function(e) {
-          if (e.message && !e.message.startsWith('HTTP ')) throw e;
-          throw new Error('HTTP ' + r.status);
+          if (e && e.message && !e.message.startsWith('HTTP') && !e.message.startsWith('Server returned')) {
+            throw e;
+          }
+          throw new Error('Server returned error HTTP ' + r.status);
         });
       }
       return r.json();
@@ -409,14 +411,16 @@ function handleFile(file) {
       addAudit('ocr', 'OCR processed ' + file.name + ' — ' + tests.length + ' findings extracted.');
     })
     .catch(function(e) {
-      var raw = e.message || String(e);
-      var m = raw.match(/HTTP (\d+)/);
-      var code = m ? m[1] : '';
-      var friendly = (code === '502' || code === '504')
-        ? 'The server timed out analyzing that file (large files take longer on the free tier). Try a smaller file, or try again in a minute.'
-        : (code === '413'
-          ? 'That file is too large. Images: under 5MB (JPG under 2MB works best). PDFs: under 10MB and 50 pages.'
-          : (raw.startsWith('Upload failed') ? raw : 'Upload failed: ' + raw));
+      var raw = (e && e.message) ? e.message : String(e);
+      raw = raw.replace(/^(Upload failed:\s*)+/gi, '').trim();
+      var friendly = raw;
+      if (raw.indexOf('502') >= 0 || raw.indexOf('504') >= 0) {
+        friendly = 'The server timed out analyzing that file. Please try again in a moment.';
+      } else if (raw.indexOf('413') >= 0) {
+        friendly = 'File is too large. Allowed formats: PNG/JPG under 5MB, PDF under 10MB.';
+      } else if (!raw) {
+        friendly = 'Upload failed. Please try again.';
+      }
       if (errEl) { errEl.textContent = friendly; errEl.style.display = ''; }
       var dz = $('#dropzone'); if (dz) dz.innerHTML = '<i class="fas fa-cloud-arrow-up triage-dropzone-icon"></i><p class="triage-dropzone-title" id="dropzone-title">Click to upload a lab/report image</p><p class="triage-dropzone-sub">PNG / JPG / JPEG / PDF · AI-based analysis</p>';
     });

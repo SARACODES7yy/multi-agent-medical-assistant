@@ -365,6 +365,13 @@ async def chat(
         augmented_text = augment_query(query_text_pdf, session_id)
         try:
             response_data = await run_in_threadpool(process_query, augmented_text, history, user_id)
+        except Exception as pdf_err:
+            logger.warning(f"LLM synthesis on PDF failed: {pdf_err}, returning extracted text fallback")
+            response_data = {
+                "status": "success",
+                "output": f"Extracted Document Content ({page_count} page(s)):\n\n{pdf_text}",
+                "agent_name": "PDF_OCR_Extractor"
+            }
         finally:
             try: os.remove(file_path)
             except Exception: pass
@@ -402,16 +409,16 @@ async def chat(
                 try:
                     response_data = await run_in_threadpool(process_query, {"text": augmented_text}, history, user_id)
                 except Exception as fallback_err:
-                    try: os.remove(file_path)
-                    except Exception: pass
-                    return JSONResponse(
-                        status_code=400,
-                        content={
-                            "status": "error",
-                            "agent": "System",
-                            "response": f"Image analysis error: {str(img_err)}"
-                        }
-                    )
+                    try:
+                        from agents.agent_decision import AgentConfig
+                        ocr_text = AgentConfig.image_analyzer.image_classifier._ocr_image(file_path)
+                    except Exception:
+                        ocr_text = ""
+                    response_data = {
+                        "status": "success",
+                        "output": f"Extracted Image Text:\n\n{ocr_text}" if ocr_text else "Medical report image attached for reviewer triage.",
+                        "agent_name": "Image_OCR_Extractor"
+                    }
             if response_data.get("status") == "validation_required":
                 response.set_cookie(key="session_id", value=session_id)
                 return {"status": "validation_required", "message": response_data["message"], "thread_id": response_data["thread_id"]}
