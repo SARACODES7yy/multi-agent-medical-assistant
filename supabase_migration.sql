@@ -144,3 +144,50 @@ DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'triage_sessions'::regclass AND polname = 'triage_sessions_delete')
     THEN CREATE POLICY "triage_sessions_delete" ON triage_sessions FOR DELETE USING (true); END IF;
 END $$;
+
+-- Book Call tables
+CREATE TABLE IF NOT EXISTS doctor_availability (
+    id TEXT PRIMARY KEY,
+    doctor_id TEXT NOT NULL,
+    date DATE NOT NULL,
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL,
+    max_slots INTEGER DEFAULT 1,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (doctor_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS call_bookings (
+    id TEXT PRIMARY KEY,
+    patient_id TEXT NOT NULL,
+    doctor_id TEXT NOT NULL,
+    availability_id TEXT,
+    scheduled_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'requested' CHECK(status IN ('requested','confirmed','completed','cancelled')),
+    notes TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (patient_id) REFERENCES users(id),
+    FOREIGN KEY (doctor_id) REFERENCES users(id),
+    FOREIGN KEY (availability_id) REFERENCES doctor_availability(id)
+);
+
+-- Book Call RLS policies
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'doctor_availability'::regclass AND polname = 'doctor_availability_select')
+    THEN CREATE POLICY "doctor_availability_select" ON doctor_availability FOR SELECT USING (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'doctor_availability'::regclass AND polname = 'doctor_availability_insert')
+    THEN CREATE POLICY "doctor_availability_insert" ON doctor_availability FOR INSERT WITH CHECK (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'doctor_availability'::regclass AND polname = 'doctor_availability_update')
+    THEN CREATE POLICY "doctor_availability_update" ON doctor_availability FOR UPDATE USING (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'doctor_availability'::regclass AND polname = 'doctor_availability_delete')
+    THEN CREATE POLICY "doctor_availability_delete" ON doctor_availability FOR DELETE USING (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'call_bookings'::regclass AND polname = 'call_bookings_select')
+    THEN CREATE POLICY "call_bookings_select" ON call_bookings FOR SELECT USING (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'call_bookings'::regclass AND polname = 'call_bookings_insert')
+    THEN CREATE POLICY "call_bookings_insert" ON call_bookings FOR INSERT WITH CHECK (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'call_bookings'::regclass AND polname = 'call_bookings_update')
+    THEN CREATE POLICY "call_bookings_update" ON call_bookings FOR UPDATE USING (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'call_bookings'::regclass AND polname = 'call_bookings_delete')
+    THEN CREATE POLICY "call_bookings_delete" ON call_bookings FOR DELETE USING (true); END IF;
+END $$;
