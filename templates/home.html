@@ -134,7 +134,7 @@
                                     <div class="triage-listening-pill" id="listening-pill" style="display:none;"><span class="triage-pulse"></span> LIVE</div>
                                 </div>
                                 <div class="triage-mic-note" id="mic-error"></div>
-                                <p class="triage-hint">Voice uses the browser's built-in Web Speech API for direct live transcription — no audio is recorded or sent to a server. Requires Chrome/Edge.</p>
+                                <p class="triage-hint">Voice uses Chrome/Edge's built-in Web Speech API for live transcription — no audio is sent to a server. Other browsers fall back to secure server-side transcription when configured (HTTPS or localhost required).</p>
                             </div>
                             <div class="triage-consent">
                                 <label class="triage-check"><input type="checkbox" id="consent"> <span>Patient (or guardian) has given informed consent for this triage-assist prototype</span></label>
@@ -347,6 +347,6 @@
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="/static/js/triage.js?v=3"></script>
+    <script src="/static/js/triage.js?v=4"></script>
 </body>
 </html>

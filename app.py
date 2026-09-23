@@ -896,9 +896,25 @@ async def validate_medical_output(request: Request, response: Response, session_
 
     return {"status": "success", "response": result['messages'][-1].content, "agent": result.get("agent_name")}
 
+@app.get("/api/speech-config")
+async def get_speech_config():
+    """Report server-side voice availability to the client (no secrets)."""
+    has_key = bool(config.speech.eleven_labs_api_key)
+    return {
+        "available": has_key and PYDUB_AVAILABLE,
+        "elevenlabs_key": has_key,
+        "pydub": PYDUB_AVAILABLE,
+        "engine": "elevenlabs-scribe" if (has_key and PYDUB_AVAILABLE) else None,
+    }
+
 @app.post("/transcribe")
 async def transcribe_audio(audio: UploadFile = File(...)):
     """Endpoint to transcribe speech using ElevenLabs API"""
+    if not config.speech.eleven_labs_api_key:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Server-side voice transcription is not configured (ELEVEN_LABS_API_KEY missing)."}
+        )
     if not audio.filename:
         return JSONResponse(
             status_code=400,

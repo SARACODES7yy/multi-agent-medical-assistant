@@ -101,7 +101,8 @@ var state = {
   queueLoaded: false,
   seedLoaded: false,
   batchBar: false,
-  batchSelected: {}
+  batchSelected: {},
+  speechConfig: null
 };
 
 /* ---------- Init ---------- */
@@ -110,7 +111,10 @@ function init() {
   state.isStaff = ['doctor', 'nurse'].indexOf(state.role) >= 0;
   populateFacilitySelect();
   populateLangSelect();
-  bindMic();
+  fetch('/api/speech-config', { credentials: 'include' })
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .catch(function() { return null; })
+    .then(function(cfg) { state.speechConfig = cfg; bindMic(); });
   bindDropzone();
   bindGenerate();
   bindActions();
@@ -246,8 +250,13 @@ function bindMic() {
   var btn = $('#mic-btn'); if (!btn) return;
   var supported = typeof window.webkitSpeechRecognition === 'function' || typeof window.SpeechRecognition === 'function';
   if (!supported) {
+    var cfg = state.speechConfig;
+    if (cfg && cfg.available && typeof window.MediaRecorder === 'function' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      bindMediaRecorder();
+      return;
+    }
     btn.style.display = 'none';
-    micShowErr('Voice input is not supported in this browser — use Chrome or Edge for live dictation, or type manually.');
+    micShowErr('Voice input is not available — this browser lacks live dictation and the server voice fallback is off. Type manually.');
     return;
   }
   if (window.isSecureContext !== true) {
@@ -258,6 +267,71 @@ function bindMic() {
   var langSel = $('#input-lang');
   if (langSel) langSel.addEventListener('change', function() { if (recognition) { try { recognition.lang = micLang(); } catch (e) {} } });
   btn.addEventListener('click', function() { if (isRecording) stopMic(); else startMic(); });
+}
+
+/* ---------- Mic: server-side fallback (MediaRecorder -> /transcribe) ---------- */
+var mediaRecorder = null, mediaChunks = [], mrBusy = false;
+function mrLabel() { var l = $('#mic-label'); if (l) l.textContent = 'Speak (server)'; }
+function bindMediaRecorder() {
+  var btn = $('#mic-btn'); if (!btn) return;
+  if (window.isSecureContext !== true) {
+    micShowErr('Voice needs a secure connection (HTTPS or localhost). You are on a plain http:// address — open the https:// link, or use localhost.');
+  }
+  btn.style.display = '';
+  micClearErr();
+  mrLabel();
+  btn.addEventListener('click', function() { if (isRecording) stopMediaMic(); else startMediaMic(); });
+}
+function startMediaMic() {
+  if (isRecording || mrBusy) return;
+  micClearErr();
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream) {
+    mediaChunks = [];
+    mediaRecorder = new MediaRecorder(stream);
+    isRecording = true; micSetLive(true);
+    mediaRecorder.ondataavailable = function(e) { if (e.data && e.data.size) mediaChunks.push(e.data); };
+    mediaRecorder.onstop = function() {
+      stream.getTracks().forEach(function(t) { try { t.stop(); } catch (e) {} });
+      isRecording = false; micSetLive(false); mrLabel();
+      stopMicWatchdog();
+      var blob = new Blob(mediaChunks, { type: 'audio/webm' });
+      mediaChunks = [];
+      if (!blob.size) { micShowErr('No audio captured — check your microphone, then tap Speak and try again.'); return; }
+      uploadMediaAudio(blob);
+    };
+    mediaRecorder.start();
+  }).catch(function(e) {
+    isRecording = false; micSetLive(false); mrLabel();
+    micShowErr('Could not start microphone: ' + (e && e.message ? e.message : e) + ' — allow mic permission for this site and retry.');
+  });
+}
+function stopMediaMic() {
+  stopMicWatchdog();
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') { try { mediaRecorder.stop(); } catch (e) {} }
+}
+function uploadMediaAudio(blob) {
+  var fd = new FormData(); fd.append('audio', blob, 'speech.webm');
+  var lbl = $('#mic-label'); if (lbl) lbl.textContent = 'Transcribing…';
+  mrBusy = true;
+  fetch('/transcribe', { method: 'POST', body: fd, credentials: 'include' })
+    .then(function(r) {
+      return r.json().then(function(j) {
+        if (!r.ok) throw new Error((j && (j.error || j.detail)) || ('HTTP ' + r.status));
+        return j;
+      });
+    })
+    .then(function(j) {
+      mrBusy = false; mrLabel();
+      var t = ((j && j.transcript) || '').trim();
+      var ta = $('#symptoms');
+      if (ta && t) ta.value = (ta.value.trim() ? ta.value.trim() + ' ' : '') + t;
+      if (!t) micShowErr('No speech recognized — tap Speak and try again.');
+      else micClearErr();
+    })
+    .catch(function(e) {
+      mrBusy = false; mrLabel();
+      micShowErr('Voice transcription failed: ' + e.message);
+    });
 }
 
 /* ---------- Dropzone / OCR ---------- */
