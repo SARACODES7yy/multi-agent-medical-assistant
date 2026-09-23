@@ -209,11 +209,19 @@ async def chat(
                 filename_str = getattr(uploaded, "filename", "") or "upload"
             except Exception:
                 filename_str = "upload"
-            # Detect type even for empty filename (fallback to image)
+            # Detect type and validate extension
             is_img_file = is_image(filename_str)
             is_pdf_file = is_pdf(filename_str)
-            # Content-based fallback: treat as image if unknown but file present
             if not is_img_file and not is_pdf_file:
+                if '.' in filename_str and filename_str.rsplit('.', 1)[1].lower() not in ALLOWED_EXTENSIONS:
+                    return JSONResponse(
+                        status_code=400,
+                        content={
+                            "status": "error",
+                            "agent": "System",
+                            "response": f"Unsupported file type '{filename_str}'. Allowed formats: PNG, JPG, JPEG, PDF"
+                        }
+                    )
                 is_img_file = True
             has_file = True
             try:
@@ -363,9 +371,21 @@ async def chat(
             query = {"text": augmented_text, "image": file_path}
             try:
                 response_data = await run_in_threadpool(process_query, query, history, user_id)
-            except Exception:
-                # Fall back to text-only analysis when the image analysis agent fails
-                response_data = await run_in_threadpool(process_query, {"text": augmented_text}, history, user_id)
+            except Exception as img_err:
+                logger.warning(f"Image query failed: {img_err}, trying fallback text analysis")
+                try:
+                    response_data = await run_in_threadpool(process_query, {"text": augmented_text}, history, user_id)
+                except Exception as fallback_err:
+                    try: os.remove(file_path)
+                    except Exception: pass
+                    return JSONResponse(
+                        status_code=400,
+                        content={
+                            "status": "error",
+                            "agent": "System",
+                            "response": f"Image analysis error: {str(img_err)}"
+                        }
+                    )
             if response_data.get("status") == "validation_required":
                 response.set_cookie(key="session_id", value=session_id)
                 return {"status": "validation_required", "message": response_data["message"], "thread_id": response_data["thread_id"]}

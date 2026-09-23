@@ -359,7 +359,18 @@ function handleFile(file) {
   var dz = $('#dropzone'); if (dz) { dz.innerHTML = '<div class="triage-spinner" style="margin:0 auto 10px;"></div><p class="triage-note-loading" style="text-align:center;">Processing report…</p>'; }
   var fd = new FormData(); fd.append('file', file); fd.append('query', '');
   fetch('/chat', { method: 'POST', body: fd, credentials: 'include' })
-    .then(function(r) { if (!r.ok) throw new Error('Upload failed: HTTP ' + r.status); return r.json(); })
+    .then(function(r) {
+      if (!r.ok) {
+        return r.json().then(function(errData) {
+          var detail = (errData && (errData.response || errData.detail || errData.message)) || ('HTTP ' + r.status);
+          throw new Error(detail);
+        }).catch(function(e) {
+          if (e.message && !e.message.startsWith('HTTP ')) throw e;
+          throw new Error('HTTP ' + r.status);
+        });
+      }
+      return r.json();
+    })
     .then(function(d) {
       var text = (d && d.response) || '';
       var tests = null;
@@ -405,7 +416,7 @@ function handleFile(file) {
         ? 'The server timed out analyzing that file (large files take longer on the free tier). Try a smaller file, or try again in a minute.'
         : (code === '413'
           ? 'That file is too large. Images: under 5MB (JPG under 2MB works best). PDFs: under 10MB and 50 pages.'
-          : 'Upload failed: ' + raw);
+          : (raw.startsWith('Upload failed') ? raw : 'Upload failed: ' + raw));
       if (errEl) { errEl.textContent = friendly; errEl.style.display = ''; }
       var dz = $('#dropzone'); if (dz) dz.innerHTML = '<i class="fas fa-cloud-arrow-up triage-dropzone-icon"></i><p class="triage-dropzone-title" id="dropzone-title">Click to upload a lab/report image</p><p class="triage-dropzone-sub">PNG / JPG / JPEG / PDF · AI-based analysis</p>';
     });
