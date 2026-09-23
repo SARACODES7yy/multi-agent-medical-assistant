@@ -355,7 +355,28 @@
                     formData.append('text', message);
                     formData.append('file', uploadFile);
                     const res = await fetch('/upload', { method:'POST', body:formData, credentials:'include' });
-                    data = await res.json();
+                    let upData = null;
+                    try { upData = await res.json(); } catch(e) { upData = null; }
+                    if (!res.ok || !upData) {
+                        chatBody.removeChild(think);
+                        const errDiv = document.createElement('div');
+                        errDiv.className = 'message assistant-message';
+                        let upMsg;
+                        if (upData && upData.status === 'error' && upData.response) {
+                            upMsg = upData.response;
+                        } else if (res.status === 502 || res.status === 504) {
+                            upMsg = 'The server timed out analyzing that image (large photos take longer on the free tier). Please try a smaller JPG under 2MB, or try again in a minute.';
+                        } else if (res.status === 413) {
+                            upMsg = 'That file is too large. Please use an image under 5MB (a JPG under 2MB works best).';
+                        } else {
+                            upMsg = 'The image could not be analyzed (status ' + res.status + '). Please try a smaller, clearer photo.';
+                        }
+                        errDiv.innerHTML = '<p class="text-danger">' + upMsg + '</p>';
+                        chatBody.appendChild(errDiv);
+                        chatBody.scrollTop = chatBody.scrollHeight;
+                        return;
+                    }
+                    data = upData;
                 } else {
                     const res = await fetch('/chat', {
                         method:'POST', headers:{'Content-Type':'application/json'},

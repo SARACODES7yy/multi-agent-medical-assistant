@@ -38,6 +38,7 @@ from io import BytesIO
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Request, Response, Cookie
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+from starlette.concurrency import run_in_threadpool
 from langchain_core.messages import HumanMessage
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -435,6 +436,18 @@ async def upload_file(
     with open(file_path, "wb") as f:
         f.write(file_content)
 
+    # Bound OCR/LLM time and RAM: downscale very large photos before analysis.
+    # (Full-res phone photos spike memory on small Render instances -> 502.)
+    if is_img_file:
+        try:
+            from PIL import Image
+            with Image.open(file_path) as im:
+                if max(im.size) > 1600:
+                    im.thumbnail((1600, 1600), Image.LANCZOS)
+                    im.save(file_path)
+        except Exception as e:
+            logger.warning(f"Image downscale skipped: {e}")
+
     try:
         payload = verify_session_cookie(session_id)
         user_id = payload["user_id"] if payload else None
@@ -510,11 +523,14 @@ async def upload_file(
             # --- Image path: existing image analysis workflow ---
             augmented_text = augment_query(text or "Analyze this medical image", session_id)
             query = {"text": augmented_text, "image": file_path}
+            # process_query is fully synchronous (local OCR + several LLM calls).
+            # Run it in a worker thread so this single-worker server keeps answering
+            # /health and other requests instead of hanging until the proxy gives up (502).
             try:
-                response_data = process_query(query, conversation_history=history, user_id=user_id)
+                response_data = await run_in_threadpool(process_query, query, history, user_id)
             except Exception:
                 # Fall back to text-only analysis when the image analysis agent fails
-                response_data = process_query({"text": augmented_text}, conversation_history=history, user_id=user_id)
+                response_data = await run_in_threadpool(process_query, {"text": augmented_text}, history, user_id)
             if response_data.get("status") == "validation_required":
                 response.set_cookie(key="session_id", value=session_id)
                 return {"status": "validation_required", "message": response_data["message"], "thread_id": response_data["thread_id"]}
