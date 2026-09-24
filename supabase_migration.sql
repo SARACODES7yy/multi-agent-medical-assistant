@@ -260,3 +260,51 @@ DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'lab_results'::regclass AND polname = 'lab_results_insert')
     THEN CREATE POLICY "lab_results_insert" ON lab_results FOR INSERT WITH CHECK (true); END IF;
 END $$;
+
+-- In-app notifications + billing/invoices
+CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'info',
+    title TEXT DEFAULT '',
+    body TEXT DEFAULT '',
+    link TEXT DEFAULT '',
+    is_read BOOLEAN DEFAULT FALSE,
+    created_at TEXT NOT NULL
+);
+ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS invoices (
+    id TEXT PRIMARY KEY,
+    invoice_no TEXT NOT NULL,
+    patient_id TEXT NOT NULL,
+    doctor_id TEXT,
+    triage_session_id TEXT,
+    prescription_id TEXT,
+    items TEXT DEFAULT '[]',
+    subtotal REAL DEFAULT 0,
+    tax REAL DEFAULT 0,
+    total REAL DEFAULT 0,
+    currency TEXT DEFAULT 'INR',
+    status TEXT NOT NULL DEFAULT 'unpaid' CHECK(status IN ('unpaid','paid')),
+    paid_at TEXT,
+    notes TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'notifications'::regclass AND polname = 'notifications_select')
+    THEN CREATE POLICY "notifications_select" ON notifications FOR SELECT USING (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'notifications'::regclass AND polname = 'notifications_insert')
+    THEN CREATE POLICY "notifications_insert" ON notifications FOR INSERT WITH CHECK (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'notifications'::regclass AND polname = 'notifications_update')
+    THEN CREATE POLICY "notifications_update" ON notifications FOR UPDATE USING (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'invoices'::regclass AND polname = 'invoices_select')
+    THEN CREATE POLICY "invoices_select" ON invoices FOR SELECT USING (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'invoices'::regclass AND polname = 'invoices_insert')
+    THEN CREATE POLICY "invoices_insert" ON invoices FOR INSERT WITH CHECK (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'invoices'::regclass AND polname = 'invoices_update')
+    THEN CREATE POLICY "invoices_update" ON invoices FOR UPDATE USING (true); END IF;
+END $$;

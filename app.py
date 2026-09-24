@@ -40,6 +40,7 @@ from io import BytesIO
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Request, Response, Cookie
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from starlette.concurrency import run_in_threadpool
+from contextlib import asynccontextmanager
 from langchain_core.messages import HumanMessage
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -64,7 +65,9 @@ from auth import AuthManager, create_session_cookie, verify_session_cookie
 from models.db import get_db, Database
 from models.patient_rag import PatientRAG
 from utils.pdf_extract import extract_pdf_text
-from utils.pdf_export import build_soap_pdf, build_prescription_pdf
+from utils.pdf_export import build_soap_pdf, build_prescription_pdf, build_invoice_pdf
+from utils.notify import build_daily_digest, dispatch_digest, create_notification
+import utils.interactions as rx_intx
 
 # Module-level image agent (lazy): avoids re-loading OCR/LLM models per request.
 _image_agent: _ImageAnalysisAgent | None = None
@@ -106,6 +109,36 @@ db = get_db()
 
 # Initialize FastAPI app
 app = FastAPI(title="Multi-Agent Medical Chatbot", version="2.0")
+
+# Background daily-digest scheduler (dispatches one digest notification per
+# doctor/nurse for today's due follow-ups, critical labs, unpaid invoices).
+_DIGEST_INTERVAL_SEC = int(os.getenv("DIGEST_INTERVAL_SEC", "28800"))
+_digest_task = None
+
+@asynccontextmanager
+async def lifespan(fastapp: FastAPI):
+    global _digest_task
+    if os.getenv("DISABLE_SCHEDULER", "").lower() == "true":
+        yield
+        return
+    async def _digest_loop():
+        while True:
+            try:
+                digest, sent = dispatch_digest(db)
+                if sent:
+                    logger.info("daily digest dispatched to %s doctors (%s)", sent, digest.get("date"))
+            except Exception as e:
+                logger.warning("digest dispatch failed: %s", e)
+            await asyncio.sleep(_DIGEST_INTERVAL_SEC)
+    _digest_task = asyncio.create_task(_digest_loop())
+    try:
+        yield
+    finally:
+        if _digest_task:
+            _digest_task.cancel()
+            _digest_task = None
+
+app = FastAPI(title="Multi-Agent Medical Chatbot", version="2.1", lifespan=lifespan)
 
 # Set up directories
 UPLOAD_FOLDER = "uploads/backend"
@@ -1152,6 +1185,10 @@ async def update_soap_note(note_id: str, request: Request, session_id: Optional[
     note = db.update_soap_note(note_id, updates)
     if not note:
         raise HTTPException(status_code=404, detail="SOAP note not found")
+    if note.get("status") == "signed" and note.get("patient_id"):
+        create_notification(db, note["patient_id"], "soap_signed",
+                            "Consultation note signed",
+                            "Your doctor has signed a SOAP note for your recent consultation.", link="/profile")
     return {"status": "ok", "note": note}
 
 @app.get("/api/soap/{note_id}/pdf")
@@ -1199,7 +1236,16 @@ async def generate_prescription(req: PrescriptionGenerateRequest, session_id: Op
     profile = db.get_profile(req.patient_id) or {}
     triage = db.get_triage_session(req.triage_session_id) if req.triage_session_id else None
     rx_data = await run_in_threadpool(_get_rx_agent().generate, req.intent, profile, triage or {})
-    rx = db.save_prescription({
+    rx_data = dict(rx_data)
+    rx_data["items"] = rx_data.get("items") or []
+    rx_data["warnings"] = rx_data.get("warnings") or []
+    its = rx_intx.warning_lines(rx_data["items"])
+    if its:
+        for line in its:
+            if line not in rx_data["warnings"]:
+                rx_data["warnings"].append(line)
+    interact_saved = bool(its)
+    got_it = db.save_prescription({
         "patient_id": req.patient_id,
         "doctor_id": payload["user_id"],
         "triage_session_id": req.triage_session_id,
@@ -1208,9 +1254,9 @@ async def generate_prescription(req: PrescriptionGenerateRequest, session_id: Op
         "advice": rx_data["advice"],
         "status": "draft",
     })
-    if not rx:
+    if not got_it:
         raise HTTPException(status_code=500, detail="Failed to save prescription")
-    return {"status": "ok", "prescription": rx}
+    return {"status": "ok", "prescription": got_it, "interaction_checked": interact_saved}
 
 @app.get("/api/prescriptions")
 def list_prescriptions(patient_id: Optional[str] = None, session_id: Optional[str] = Cookie(None)):
@@ -1251,6 +1297,10 @@ async def update_prescription(rx_id: str, request: Request, session_id: Optional
     rx = db.update_prescription(rx_id, updates)
     if not rx:
         raise HTTPException(status_code=404, detail="Prescription not found")
+    if rx.get("status") == "signed" and rx.get("patient_id"):
+        create_notification(db, rx["patient_id"], "rx_signed",
+                            "Prescription signed",
+                            "Your doctor has signed a prescription. You can view and export it from your profile.", link="/profile")
     return {"status": "ok", "prescription": rx}
 
 @app.get("/api/prescription/{rx_id}/pdf")
@@ -1278,6 +1328,209 @@ def prescription_pdf(rx_id: str, session_id: Optional[str] = Cookie(None)):
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="prescription_{rx_id[:8]}.pdf"'},
     )
+
+
+# ---------- Notifications + daily digest ----------
+
+@app.get("/api/notifications")
+def list_notifications(unread: int = 0, limit: int = 50, session_id: Optional[str] = Cookie(None)):
+    """In-app notifications for the logged-in user (bell dropdown)."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    rows = db.get_notifications(payload["user_id"], unread_only=bool(unread), limit=limit)
+    unread_count = db.notifications_unread_count(payload["user_id"])
+    return {"status": "ok", "notifications": rows, "unread": unread_count}
+
+@app.post("/api/notifications/{notification_id}/read")
+def mark_notification_read(notification_id: str, session_id: Optional[str] = Cookie(None)):
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    ok = db.mark_notification_read(notification_id, payload["user_id"])
+    if not ok:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return {"status": "ok"}
+
+@app.post("/api/notifications/read-all")
+def mark_all_notifications_read(session_id: Optional[str] = Cookie(None)):
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    db.mark_all_notifications_read(payload["user_id"])
+    return {"status": "ok"}
+
+@app.get("/api/notifications/digest")
+def get_daily_digest(session_id: Optional[str] = Cookie(None)):
+    """Compute today's clinical digest (no dispatch)."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return {"status": "ok", "digest": build_daily_digest(db)}
+
+@app.post("/api/notifications/digest")
+def dispatch_daily_digest(session_id: Optional[str] = Cookie(None)):
+    """Build + send today's digest to every doctor/nurse as a notification."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    digest, sent = dispatch_digest(db)
+    return {"status": "ok", "digest": digest, "dispatched": sent}
+
+
+# ---------- Invoices / billing ----------
+
+def _invoice_number() -> str:
+    return "INV-" + datetime.now(timezone.utc).strftime("%Y%m%d") + "-" + uuid.uuid4().hex[:5].upper()
+
+
+class InvoiceCreateRequest(BaseModel):
+    patient_id: str
+    prescription_id: Optional[str] = None
+    triage_session_id: Optional[str] = None
+    items: Optional[List[dict]] = None
+    subtotal: Optional[float] = None
+    tax: Optional[float] = 0
+    currency: str = "INR"
+    notes: str = ""
+
+@app.post("/api/invoices")
+async def create_invoice(req: InvoiceCreateRequest, session_id: Optional[str] = Cookie(None)):
+    """Doctor bills a patient (optionally from a prescription) with an invoice."""
+    payload = verify_session_cookie(session_id)
+    if not payload or payload["role"] not in ("doctor", "nurse"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    patient = db.get_user(req.patient_id)
+    if not patient or patient.get("role") != "patient":
+        raise HTTPException(status_code=404, detail="Patient not found")
+    items = list(req.items or [])
+    if req.prescription_id and not items:
+        rx = db.get_prescription(req.prescription_id)
+        if not rx:
+            raise HTTPException(status_code=404, detail="Prescription not found")
+        if rx.get("patient_id") != req.patient_id:
+            raise HTTPException(status_code=400, detail="Prescription belongs to another patient")
+        items = [{"description": (i.get("drug") if isinstance(i, dict) else str(i)),
+                  "qty": 1, "rate": 0.0, "amount": 0.0} for i in rx.get("items", [])]
+    if not items:
+        items = [{"description": "Consultation", "qty": 1, "rate": 0.0, "amount": 0.0}]
+    subtotal = float(req.subtotal) if req.subtotal is not None else round(sum(float(i.get("amount") or 0) for i in items), 2)
+    tax = float(req.tax or 0)
+    total = round(subtotal + tax, 2)
+    now = datetime.now(timezone.utc).isoformat()
+    invoice = {
+        "invoice_no": _invoice_number(),
+        "patient_id": req.patient_id,
+        "doctor_id": payload["user_id"],
+        "triage_session_id": req.triage_session_id,
+        "prescription_id": req.prescription_id,
+        "items": items,
+        "subtotal": subtotal, "tax": tax, "total": total,
+        "currency": req.currency, "status": "unpaid", "paid_at": None,
+        "notes": req.notes, "created_at": now, "updated_at": now,
+    }
+    saved = db.create_invoice(invoice)
+    if not saved:
+        raise HTTPException(status_code=500, detail="Failed to save invoice")
+    create_notification(db, req.patient_id, "invoice",
+                        f"Invoice {saved.get('invoice_no')} raised",
+                        f"Your consultation invoice of {saved.get('currency')} {saved.get('total')} is ready. Tap to view / download.", link="/profile")
+    return {"status": "ok", "invoice": saved}
+
+@app.get("/api/invoices")
+def list_invoices(session_id: Optional[str] = Cookie(None)):
+    """Invoices for the logged-in user (patient: own; doctor/nurse: facility-wide)."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if payload["role"] == "patient":
+        rows = db.list_invoices(patient_id=payload["user_id"])
+    else:
+        rows = db.list_invoices()
+    for inv in rows:
+        prof = db.get_profile(inv.get("patient_id")) or {}
+        usr = db.get_user(inv.get("patient_id")) or {}
+        inv["patient_name"] = prof.get("name", "") or (usr.get("email", "") if usr else "")
+    return {"status": "ok", "invoices": rows}
+
+@app.patch("/api/invoice/{invoice_id}")
+async def update_invoice(invoice_id: str, request: Request, session_id: Optional[str] = Cookie(None)):
+    """Patient marks their invoice paid; doctor/nurse edits or marks paid."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    existing = db.get_invoice(invoice_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if payload["role"] == "patient" and existing.get("patient_id") != payload["user_id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    body = await request.json()
+    updates = {}
+    if payload["role"] != "patient":
+        if "items" in body and isinstance(body["items"], list):
+            updates["items"] = body["items"]
+        if "notes" in body:
+            updates["notes"] = str(body.get("notes") or "")
+    status = body.get("status")
+    if status in ("paid", "unpaid"):
+        updates["status"] = status
+        updates["paid_at"] = datetime.now(timezone.utc).isoformat() if status == "paid" else None
+    if not updates:
+        raise HTTPException(status_code=400, detail="No updates provided")
+    invoice = db.update_invoice(invoice_id, updates)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if invoice.get("status") == "paid":
+        create_notification(db, invoice.get("doctor_id") or "", "invoice",
+                            f"Invoice {invoice.get('invoice_no')} paid",
+                            f"Payment of {invoice.get('currency')} {invoice.get('total')} recorded.", link="/")
+    return {"status": "ok", "invoice": invoice}
+
+@app.get("/api/invoice/{invoice_id}/pdf")
+def invoice_pdf(invoice_id: str, session_id: Optional[str] = Cookie(None)):
+    """Branded invoice PDF."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    invoice = db.get_invoice(invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if payload["role"] == "patient" and invoice.get("patient_id") != payload["user_id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    doctor_profile = db.get_profile(invoice.get("doctor_id")) if invoice.get("doctor_id") else None
+    patient_label = ""
+    if invoice.get("patient_id"):
+        prof = db.get_profile(invoice["patient_id"]) or {}
+        usr = db.get_user(invoice["patient_id"]) or {}
+        patient_label = prof.get("name") or usr.get("email", "")
+    pdf = build_invoice_pdf(invoice, doctor_profile, patient_label)
+    if not pdf:
+        raise HTTPException(status_code=500, detail="PDF rendering failed")
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="invoice_{invoice_id[:8]}.pdf"'},
+    )
+
+
+# ---------- Medication interaction checker ----------
+
+class DrugInteractionRequest(BaseModel):
+    drugs: List[str] = []
+    items: Optional[List[dict]] = None
+
+@app.post("/api/drug/interactions")
+def check_drug_interactions(req: DrugInteractionRequest, session_id: Optional[str] = Cookie(None)):
+    """Deterministic pairwise drug-interaction check on a bundled curated dataset."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    names = list(req.drugs or [])
+    if not names and req.items:
+        names = [i.get("drug") for i in req.items if isinstance(i, dict) and i.get("drug")]
+    conflicts = rx_intx.check_drugs(names)
+    return {"status": "ok", "interactions": conflicts}
+
 
 @app.get("/api/doctor/doctors")
 def get_doctors(session_id: Optional[str] = Cookie(None)):
@@ -1335,6 +1588,10 @@ async def book_call(request: Request, session_id: Optional[str] = Cookie(None)):
     booking = db.book_call(payload["user_id"], doctor_id, availability_id, scheduled_at, notes)
     if not booking:
         raise HTTPException(status_code=500, detail="Failed to book call")
+    if doctor_id:
+        create_notification(db, doctor_id, "booking_requested",
+                            "New call booking request",
+                            "A patient has requested a consult call. Confirm or reject it in Book Call.", link="/")
     return {"status": "ok", "booking": booking}
 
 @app.get("/api/call/bookings")

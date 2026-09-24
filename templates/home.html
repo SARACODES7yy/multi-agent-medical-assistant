@@ -32,6 +32,16 @@
                 </select>
                 {% endif %}
                 <button class="theme-toggle theme-toggle-sm" onclick="toggleTheme()" title="Toggle theme"><i class="theme-icon fas fa-moon"></i></button>
+                <div class="triage-notif-wrap">
+                    <button class="triage-notif-btn" onclick="toggleNotifPanel()" title="Notifications" aria-label="Notifications"><i class="fas fa-bell"></i><span class="triage-notif-badge" id="notif-count" style="display:none;"></span></button>
+                    <div class="triage-notif-panel" id="notif-panel" style="display:none;">
+                        <div class="triage-notif-head">
+                            <strong><i class="fas fa-bell-slash me-1"></i>Notifications</strong>
+                            <button class="btn-outline btn-sm" onclick="markNotifsRead()"><i class="fas fa-check-double me-1"></i>Mark all read</button>
+                        </div>
+                        <div id="notif-list" class="triage-notif-list"><div class="triage-empty" style="padding:14px;"><p>Loading…</p></div></div>
+                    </div>
+                </div>
                 <a href="/" class="btn-outline btn-sm"><i class="fas fa-comments me-1"></i>Chat</a>
                 {% if role == 'patient' %}
                 <a href="/profile" class="btn-outline btn-sm"><i class="fas fa-notes-medical me-1"></i>Profile</a>
@@ -242,6 +252,26 @@
                 <div id="queue-empty" class="triage-empty" style="display:none;"><i class="fas fa-inbox"></i><p>No sessions match the current filter.</p></div>
                 <div id="queue-list" class="triage-queue"></div>
             </div>
+            <div class="triage-card" id="digest-card">
+                <div class="triage-card-head triage-card-head-row">
+                    <div>
+                        <h3><i class="fas fa-calendar-day me-2 triage-teal"></i>Daily Clinical Digest</h3>
+                        <span class="triage-card-sub">Due follow-ups, critical labs, unpaid invoices and new requests for <span id="digest-date" class="capitalize">today</span>.</span>
+                    </div>
+                    <button class="btn-primary btn-sm" id="digest-run-btn" onclick="openDigest()"><i class="fas fa-bolt me-1"></i>Run digest</button>
+                </div>
+                <div id="digest-body"><div class="triage-empty"><p>Run the digest to see today's action items, or let it surface automatically.</p></div></div>
+            </div>
+            <div class="triage-card" id="invoices-card">
+                <div class="triage-card-head triage-card-head-row">
+                    <div>
+                        <h3><i class="fas fa-file-invoice-dollar me-2 triage-amber"></i>Invoices &amp; Billing</h3>
+                        <span class="triage-card-sub">Raise an invoice from any queue item (open it → Invoice). Patients can mark paid and download the PDF.</span>
+                    </div>
+                    <button class="btn-outline btn-sm" onclick="loadInvoices()"><i class="fas fa-rotate me-1"></i>Refresh</button>
+                </div>
+                <div id="invoices-body"><div class="triage-empty"><p>No invoices yet. Use “Invoice” from a queue item to raise one.</p></div></div>
+            </div>
             <div id="referral-modal" class="triage-modal" style="display:none;">
                 <div class="triage-modal-card">
                     <div class="triage-modal-head">
@@ -410,6 +440,6 @@
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="/static/js/triage.js?v=6"></script>
+    <script src="/static/js/triage.js?v=7"></script>
 </body>
 </html>

@@ -123,6 +123,8 @@ function init() {
   bindThemeLogout();
   updateBadge();
   renderHeroStats();
+  loadNotifications();
+  document.addEventListener('click', function(e) { var w = $('#notif-panel'); if (w && w.style.display !== 'none' && !e.target.closest('.triage-notif-wrap')) w.style.display = 'none'; });
   // seed if returning
   if (lsGet('triage.demoLoaded.' + state.role, false)) { state.seedLoaded = true; }
 }
@@ -792,6 +794,7 @@ function expandQueueItem(item) { expandedItem = item; var rm = RISK_META[item.ri
   if (item.patient_id) { actions += '<button class="btn-primary btn-sm" style="background:var(--amber);color:#fff;" onclick="openReferral(\'' + item.id + '\')"><i class="fas fa-arrow-right-from-bracket me-1"></i>Prepare referral note</button>'; }
   if (item.type === 'triage' && item.src === 'server') { actions += '<button class="btn-primary btn-sm" onclick="openSoap(\'' + item.id + '\')"><i class="fas fa-file-medical me-1"></i>SOAP</button>'; }
   if (item.patient_id) { actions += '<button class="btn-primary btn-sm" style="background:var(--violet,#7c3aed);color:#fff;" onclick="openRx(\'' + item.id + '\')"><i class="fas fa-prescription me-1"></i>Rx</button>'; }
+  if (item.patient_id) { actions += '<button class="btn-primary btn-sm" style="background:var(--amber,#d97706);color:#fff;" onclick="createInvoice(\'' + item.id + '\',\'' + item.patient_id + '\')"><i class="fas fa-file-invoice-dollar me-1"></i>Invoice</button>'; }
   actions += '<button class="btn-outline btn-sm" onclick="closeReferral()">Close</button></div>';
   $('#referral-body').insertAdjacentHTML('beforeend', actions);
 }
@@ -1245,6 +1248,104 @@ function seedDemo() {
   var arr = getSessions(); demos.forEach(function(d) { var idx = arr.findIndex(function(s) { return s.code === d.code; }); if (idx >= 0) arr[idx] = d; else arr.unshift(d); }); lsSet(SK(), arr); addAudit('demo_loaded', '8 synthetic demo triage cases loaded into the queue.'); refreshQueue();
 }
 
+/* ---------- Notifications + digest + invoices (Priority 2/3) ---------- */
+state.notifs = [];
+function notifKindIcon(k) { return { digest: 'fa-calendar-day', followup_due: 'fa-calendar-check', lab_critical: 'fa-vial-circle-check', invoice: 'fa-file-invoice-dollar', rx_signed: 'fa-prescription', soap_signed: 'fa-file-medical', booking_requested: 'fa-phone' }[k] || 'fa-bell'; }
+function notifKindCls(k) { return { digest: 'triage-teal', followup_due: 'triage-amber', lab_critical: 'triage-danger2', invoice: 'triage-amber', rx_signed: 'triage-violet', soap_signed: 'triage-teal', booking_requested: 'triage-blue' }[k] || 'triage-muted'; }
+async function loadNotifications() {
+  try {
+    var d = await fetch('/api/notifications?limit=30', { credentials: 'include' });
+    var j = await d.json();
+    state.notifs = (j.status === 'ok' && j.notifications) ? j.notifications : [];
+    var un = (j.status === 'ok') ? (j.unread || 0) : 0;
+    var b = $('#notif-count');
+    if (b) { b.style.display = un ? '' : 'none'; b.textContent = un > 99 ? '99+' : un; }
+  } catch (e) { state.notifs = []; }
+  renderNotifList();
+}
+function renderNotifList() {
+  var el = $('#notif-list'); if (!el) return;
+  if (!state.notifs.length) { el.innerHTML = '<div class="triage-empty" style="padding:14px;"><p>No notifications yet.</p></div>'; return; }
+  el.innerHTML = state.notifs.map(function(n) {
+    return '<div class="triage-notif-item' + (n.is_read ? '' : ' triage-notif-unread') + '">'
+      + '<i class="fas ' + esc(notifKindIcon(n.kind)) + ' ' + esc(notifKindCls(n.kind)) + '"></i>'
+      + '<div class="triage-notif-body"><div class="triage-notif-title">' + esc(n.title || n.kind) + '</div>'
+      + (n.body ? '<div class="triage-notif-text">' + esc(n.body) + '</div>' : '')
+      + '<div class="triage-notif-time">' + timeAgo(n.created_at) + '</div></div>'
+      + (n.is_read ? '' : '<button class="triage-notif-read" onclick="markNotifRead(\'' + esc(n.id) + '\')" title="Mark read"><i class="fas fa-circle"></i></button>')
+      + '</div>';
+  }).join('');
+  updateBadge();
+}
+function toggleNotifPanel() {
+  var p = $('#notif-panel'); if (!p) return;
+  var show = p.style.display === 'none';
+  p.style.display = show ? '' : 'none';
+  if (show) loadNotifications();
+}
+async function markNotifRead(id) {
+  try { await fetch('/api/notifications/' + encodeURIComponent(id) + '/read', { method: 'POST', credentials: 'include' }); } catch (e) {}
+  loadNotifications();
+}
+async function markNotifsRead() {
+  try { await fetch('/api/notifications/read-all', { method: 'POST', credentials: 'include' }); } catch (e) {}
+  loadNotifications();
+}
+async function openDigest() {
+  var btn = $('#digest-run-btn'); if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Running…'; }
+  try {
+    var r = await fetch('/api/notifications/digest', { method: 'POST', credentials: 'include' });
+    var j = await r.json();
+    if (j.status === 'ok' && j.digest) { renderDigest(j.digest); if (j.dispatched) showToast('<i class="fas fa-paper-plane me-1"></i>Digest sent to ' + j.dispatched + ' clinician' + (j.dispatched === 1 ? '' : 's')); }
+    else showToast('<i class="fas fa-circle-exclamation me-1"></i>Digest failed: ' + esc(j.detail || 'unknown'));
+  } catch (e) { showToast('<i class="fas fa-circle-exclamation me-1"></i>Digest error'); }
+  if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-bolt me-1"></i>Run digest'; }
+  loadNotifications();
+}
+function digestKindMeta(k) { return { followup_due: ['Follow-ups due', 'triage-amber', 'fa-calendar-check'], lab_critical: ['Critical labs', 'triage-danger2', 'fa-vial-circle-check'], invoice_unpaid: ['Unpaid invoices', 'triage-violet', 'fa-file-invoice-dollar'], new_requests: ['New requests', 'triage-blue', 'fa-clipboard-list'] }[k] || [k, 'triage-muted', 'fa-bell']; }
+function renderDigest(dig) {
+  var dateEl = $('#digest-date'); if (dateEl && dig.date) dateEl.textContent = dig.date;
+  var el = $('#digest-body'); if (!el) return;
+  if (!dig.summary || !dig.summary.total) { el.innerHTML = '<div class="triage-empty"><i class="fas fa-circle-check triage-teal"></i><p>All caught up — no pending action items today.</p></div>'; return; }
+  var tiles = '';
+  (dig.items || []).forEach(function(it) {
+    if (!it.count) return;
+    var m = digestKindMeta(it.kind);
+    tiles += '<div class="triage-digest-tile"><i class="fas ' + esc(m[2]) + ' ' + esc(m[1]) + '"></i><div><div class="triage-digest-count">' + it.count + '</div><div class="triage-digest-label">' + esc(m[0]) + '</div></div></div>';
+  });
+  el.innerHTML = '<div class="triage-digest-grid">' + tiles + '</div><div class="triage-digest-generate">Generated ' + timeAgo(dig.generated_at) + ' · advisory, reviewer-facing</div>';
+}
+async function loadInvoices() {
+  var el = $('#invoices-body'); if (!el) return;
+  el.innerHTML = '<div class="triage-skeleton"><div></div><div></div></div>';
+  var rows = [];
+  try { var r = await fetch('/api/invoices', { credentials: 'include' }); var j = await r.json(); rows = (j.status === 'ok' && j.invoices) ? j.invoices : []; } catch (e) { rows = []; }
+  if (!rows.length) { el.innerHTML = '<div class="triage-empty"><p>No invoices yet. Use “Invoice” from a queue item to raise one.</p></div>'; return; }
+  el.innerHTML = '<table class="triage-invoice-table"><tr><th>No</th><th>Patient</th><th>Date</th><th>Total</th><th>Status</th><th></th></tr>'
+    + rows.map(function(inv) {
+      var paid = inv.status === 'paid';
+      return '<tr><td>' + esc(inv.invoice_no) + '</td><td>' + esc(inv.patient_name || '—') + '</td><td>' + fmtDate(inv.created_at) + '</td>'
+        + '<td>' + esc(inv.currency || 'INR') + ' ' + esc(String(inv.total)) + '</td>'
+        + '<td><span class="triage-badge ' + (paid ? 'triage-badge-status' : 'triage-badge triage-lab-abnormal') + '">' + esc(inv.status || 'unpaid') + '</span></td>'
+        + '<td class="triage-invoice-actions"><button class="btn-outline btn-sm" onclick="invoicePdf(\'' + esc(inv.id) + '\')"><i class="fas fa-file-pdf me-1"></i>PDF</button>'
+        + (paid ? '' : '<button class="btn-primary btn-sm" onclick="markInvoicePaid(\'' + esc(inv.id) + '\')"><i class="fas fa-check me-1"></i>Mark paid</button>')
+        + '</td></tr>';
+    }).join('') + '</table>';
+}
+async function markInvoicePaid(id) {
+  try { var r = await fetch('/api/invoice/' + encodeURIComponent(id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ status: 'paid' }) }); var j = await r.json(); if (j.status === 'ok') { showToast('<i class="fas fa-circle-check me-1"></i>Invoice marked paid'); loadInvoices(); } } catch (e) {}
+}
+function invoicePdf(id) {
+  window.open('/api/invoice/' + encodeURIComponent(id) + '/pdf', '_blank');
+}
+async function createInvoice(itemId, patientId) {
+  try {
+    var j = await fetch('/api/invoices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ patient_id: patientId, triage_session_id: itemId, items: [{ description: 'Consultation', qty: 1, rate: 0, amount: 0 }] }) }).then(function(r) { return r.json(); });
+    if (j.status === 'ok') { showToast('<i class="fas fa-file-invoice-dollar me-1"></i>Invoice ' + esc((j.invoice || {}).invoice_no || '') + ' raised'); loadInvoices(); }
+    else { showToast('<i class="fas fa-circle-exclamation me-1"></i>Invoice failed: ' + esc(j.detail || 'unknown')); }
+  } catch (e) { showToast('<i class="fas fa-circle-exclamation me-1"></i>Invoice error'); }
+}
+
 /* ---------- Actions binding ---------- */
 function bindActions() {
   // tabs
@@ -1263,7 +1364,7 @@ function bindActions() {
 function switchTab(name) {
   $$('.triage-tab').forEach(function(t) { t.classList.toggle('is-active', t.getAttribute('data-tab') === name); });
   $$('.triage-tabpanel').forEach(function(p) { p.classList.toggle('is-active', p.id === 'tab-' + name); });
-  if (name === 'reviewer') refreshQueue();
+  if (name === 'reviewer') { refreshQueue(); if (state.isStaff) loadInvoices(); }
   if (name === 'analytics') renderAnalytics();
   if (name === 'audit') renderAudit();
   if (name === 'history') renderHistory();

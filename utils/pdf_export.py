@@ -192,3 +192,58 @@ def build_prescription_pdf(rx: dict, doctor_profile: Optional[dict] = None,
         stamp="Digitally signed via HealthMate clinical suite" if rx.get("status") == "signed" else "DRAFT — unsigned",
     )
     return render_pdf_bytes(html)
+
+
+def build_invoice_pdf(invoice: dict, doctor_profile: Optional[dict] = None,
+                      patient_label: str = "") -> bytes:
+    """Render an invoice dict into branded A4 PDF bytes. Never raises."""
+    invoice = invoice or {}
+    meta = [
+        f"Invoice No: {invoice.get('invoice_no') or '—'}",
+        f"Patient: {patient_label}" if patient_label else "",
+        f"Date: {_fmt_dt(invoice.get('created_at'))}",
+    ]
+    meta = [m for m in meta if m]
+    if invoice.get("status") == "paid":
+        meta.append(f"Status: PAID {_fmt_dt(invoice.get('paid_at'))}")
+    else:
+        meta.append("Status: UNPAID — payment pending")
+
+    rows = []
+    for i, item in enumerate(invoice.get("items") or [], 1):
+        if not isinstance(item, dict):
+            rows.append(f"<tr><td>{i}</td><td colspan='4'>{_esc(item)}</td></tr>")
+            continue
+        rows.append(
+            "<tr>"
+            f"<td>{i}</td>"
+            f"<td>{_esc(item.get('description') or item.get('name') or '—')}</td>"
+            f"<td>{_esc(str(item.get('qty') or item.get('quantity') or 1))}</td>"
+            f"<td align='right'>{_esc(str(item.get('rate') or item.get('unit_price') or 0))}</td>"
+            f"<td align='right'>{_esc(str(item.get('amount') or 0))}</td>"
+            "</tr>"
+        )
+    currency = _esc(invoice.get("currency") or "INR")
+    totals = (
+        f"<tr><td colspan='4' align='right'><strong>Subtotal ({currency})</strong></td>"
+        f"<td align='right'>{_esc(str(invoice.get('subtotal') or 0))}</td></tr>"
+        "<tr><td colspan='4' align='right'><strong>Tax</strong></td>"
+        f"<td align='right'>{_esc(str(invoice.get('tax') or 0))}</td></tr>"
+        f"<tr><td colspan='4' align='right'><strong style='font-size:12px'>Total ({currency})</strong></td>"
+        f"<td align='right'><strong style='font-size:12px'>{_esc(str(invoice.get('total') or 0))}</strong></td></tr>"
+    )
+
+    html = _doctor_letterhead(doctor_profile, meta) + "<h1>Consultation Invoice</h1>"
+    if rows:
+        html += (
+            "<table><thead><tr><th>#</th><th>Item</th><th>Qty</th>"
+            "<th align='right'>Rate</th><th align='right'>Amount</th></tr></thead>"
+            f"<tbody>{''.join(rows)}{totals}</tbody></table>"
+        )
+    if invoice.get("notes"):
+        html += f"<h3>Notes</h3><p>{_esc(invoice['notes'])}</p>"
+    html += signature_block(
+        (doctor_profile or {}).get("name") or "",
+        stamp="Payment status: " + ("PAID via HealthMate" if invoice.get("status") == "paid" else "Pending — collect at counter"),
+    )
+    return render_pdf_bytes(html)

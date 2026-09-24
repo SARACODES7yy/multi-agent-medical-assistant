@@ -504,3 +504,56 @@
 .triage-toast-critical { border-left-color:#dc2626; background:#fff5f5; }
 .triage-toast-close { background:none; border:none; cursor:pointer; color:var(--ink-faint, #8294a6); margin-left:auto; padding:2px 4px; }
 @keyframes triageToastIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+
+/* ---------- Notifications bell ---------- */
+.triage-notif-wrap { position: relative; }
+.triage-notif-btn {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: 99px; border: 1px solid var(--line);
+  background: var(--bg-raise); color: var(--ink-dim); cursor: pointer; font-size: 14px;
+}
+.triage-notif-btn:hover { color: var(--ink); border-color: var(--trace); }
+.triage-notif-badge {
+  position: absolute; top: -4px; right: -4px; min-width: 17px; height: 17px; padding: 0 4px;
+  border-radius: 99px; background: #dc2626; color: #fff; font-size: 10px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.triage-notif-panel {
+  position: absolute; right: 0; top: 42px; width: 340px; max-height: 420px;
+  background: var(--bg-raise); border: 1px solid var(--line); border-radius: var(--r-md);
+  box-shadow: var(--shadow-soft); overflow: hidden; display: flex; flex-direction: column; z-index: 60;
+}
+.triage-notif-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 12.5px; color: var(--ink);
+}
+.triage-notif-list { overflow-y: auto; }
+.triage-notif-item {
+  display: flex; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); align-items: flex-start;
+}
+.triage-notif-item.triage-notif-unread { background: color-mix(in srgb, var(--trace) 7%, transparent); }
+.triage-notif-item i { margin-top: 3px; font-size: 13px; }
+.triage-notif-body { flex: 1; min-width: 0; }
+.triage-notif-title { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.triage-notif-text { font-size: 11.5px; color: var(--ink-dim); margin-top: 1px; line-height: 1.45; }
+.triage-notif-time { font-size: 10px; color: var(--ink-faint); margin-top: 3px; }
+.triage-notif-read { background: transparent; border: 0; color: var(--ink-faint); cursor: pointer; padding: 2px; font-size: 10px; }
+.triage-notif-read:hover { color: var(--trace); }
+
+/* ---------- Daily digest ---------- */
+.triage-digest-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 4px; }
+.triage-digest-tile {
+  display: flex; align-items: center; gap: 10px; padding: 12px;
+  background: color-mix(in srgb, var(--bg) 55%, transparent); border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+.triage-digest-tile > i { font-size: 16px; }
+.triage-digest-count { font-size: 20px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+.triage-digest-label { font-size: 11px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: .03em; }
+.triage-digest-generate { font-size: 10.5px; color: var(--ink-faint); margin-top: 8px; }
+
+/* ---------- Invoices ---------- */
+.triage-invoice-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.triage-invoice-table th { text-align: left; padding: 6px 8px; color: var(--ink-dim); font-weight: 600; border-bottom: 1px solid var(--line); font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+.triage-invoice-table td { padding: 7px 8px; border-bottom: 1px solid var(--line); color: var(--ink); }
+.triage-invoice-actions { display: flex; gap: 6px; justify-content: flex-end; }

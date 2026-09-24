@@ -157,3 +157,33 @@ CREATE TABLE IF NOT EXISTS lab_results (
     flags TEXT DEFAULT '[]',
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'info',
+    title TEXT DEFAULT '',
+    body TEXT DEFAULT '',
+    link TEXT DEFAULT '',
+    is_read BOOLEAN DEFAULT FALSE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS invoices (
+    id TEXT PRIMARY KEY,
+    invoice_no TEXT NOT NULL,
+    patient_id TEXT NOT NULL,
+    doctor_id TEXT,
+    triage_session_id TEXT,
+    prescription_id TEXT,
+    items TEXT DEFAULT '[]',
+    subtotal REAL DEFAULT 0,
+    tax REAL DEFAULT 0,
+    total REAL DEFAULT 0,
+    currency TEXT DEFAULT 'INR',
+    status TEXT NOT NULL DEFAULT 'unpaid' CHECK(status IN ('unpaid','paid')),
+    paid_at TEXT,
+    notes TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);

@@ -21,6 +21,10 @@ _SOAP_COLS = ("id", "triage_session_id", "patient_id", "doctor_id", "subjective"
 _RX_COLS = ("id", "patient_id", "doctor_id", "triage_session_id", "items", "warnings",
             "advice", "status", "signed_at", "created_at", "updated_at")
 _LAB_COLS = ("id", "user_id", "triage_session_id", "filename", "flags", "created_at")
+_NOTIF_COLS = ("id", "user_id", "kind", "title", "body", "link", "is_read", "created_at")
+_INVOICE_COLS = ("id", "invoice_no", "patient_id", "doctor_id", "triage_session_id",
+                 "prescription_id", "items", "subtotal", "tax", "total", "currency",
+                 "status", "paid_at", "notes", "created_at", "updated_at")
 
 
 def _json_list(v):
@@ -179,6 +183,33 @@ class Database:
         raise NotImplementedError
 
     def get_recent_lab_results(self, user_id=None, limit=100):
+        raise NotImplementedError
+
+    def create_notification(self, user_id, kind, title, body="", link=""):
+        raise NotImplementedError
+
+    def get_notifications(self, user_id, unread_only=False, limit=50):
+        raise NotImplementedError
+
+    def notifications_unread_count(self, user_id):
+        raise NotImplementedError
+
+    def mark_notification_read(self, notification_id, user_id):
+        raise NotImplementedError
+
+    def mark_all_notifications_read(self, user_id):
+        raise NotImplementedError
+
+    def create_invoice(self, invoice):
+        raise NotImplementedError
+
+    def get_invoice(self, invoice_id):
+        raise NotImplementedError
+
+    def list_invoices(self, patient_id=None, doctor_id=None):
+        raise NotImplementedError
+
+    def update_invoice(self, invoice_id, updates):
         raise NotImplementedError
 
 
@@ -357,6 +388,34 @@ class SQLiteDB(Database):
             filename TEXT DEFAULT '',
             flags TEXT DEFAULT '[]',
             created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS notifications (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'info',
+            title TEXT DEFAULT '',
+            body TEXT DEFAULT '',
+            link TEXT DEFAULT '',
+            is_read INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS invoices (
+            id TEXT PRIMARY KEY,
+            invoice_no TEXT NOT NULL,
+            patient_id TEXT NOT NULL,
+            doctor_id TEXT,
+            triage_session_id TEXT,
+            prescription_id TEXT,
+            items TEXT DEFAULT '[]',
+            subtotal REAL DEFAULT 0,
+            tax REAL DEFAULT 0,
+            total REAL DEFAULT 0,
+            currency TEXT DEFAULT 'INR',
+            status TEXT NOT NULL DEFAULT 'unpaid' CHECK(status IN ('unpaid','paid')),
+            paid_at TEXT,
+            notes TEXT DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
         );
         """)
         conn.commit()
@@ -752,6 +811,112 @@ class SQLiteDB(Database):
             out.append(d)
         return out
 
+    def create_notification(self, user_id, kind, title, body="", link=""):
+        nid = str(uuid.uuid4())
+        now = self._now()
+        conn = self._connect()
+        conn.execute(
+            "INSERT INTO notifications (id,user_id,kind,title,body,link,is_read,created_at) VALUES (?,?,?,?,?,?,0,?)",
+            (nid, user_id, kind, title, body, link, now))
+        conn.commit(); conn.close()
+        return {"id": nid, "user_id": user_id, "kind": kind, "title": title,
+                "body": body, "link": link, "is_read": 0, "created_at": now}
+
+    def get_notifications(self, user_id, unread_only=False, limit=50):
+        conn = self._connect()
+        sql = ("SELECT * FROM notifications WHERE user_id=? "
+               + ("AND is_read=0 " if unread_only else "")
+               + "ORDER BY created_at DESC LIMIT ?")
+        rows = conn.execute(sql, (user_id, limit)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def notifications_unread_count(self, user_id):
+        conn = self._connect()
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM notifications WHERE user_id=? AND is_read=0",
+            (user_id,)).fetchone()
+        conn.close()
+        return int(row["c"]) if row else 0
+
+    def mark_notification_read(self, notification_id, user_id):
+        conn = self._connect()
+        cur = conn.execute(
+            "UPDATE notifications SET is_read=1 WHERE id=? AND user_id=?",
+            (notification_id, user_id))
+        conn.commit(); conn.close()
+        return cur.rowcount > 0
+
+    def mark_all_notifications_read(self, user_id):
+        conn = self._connect()
+        conn.execute("UPDATE notifications SET is_read=1 WHERE user_id=?", (user_id,))
+        conn.commit(); conn.close()
+
+    def _decode_invoice_row(self, d):
+        out = dict(d)
+        try:
+            out["items"] = json.loads(out.get("items") or "[]")
+        except Exception:
+            out["items"] = []
+        return out
+
+    def create_invoice(self, invoice):
+        row = {k: invoice.get(k) for k in _INVOICE_COLS}
+        row["id"] = str(row.get("id") or uuid.uuid4())
+        row["created_at"] = row.get("created_at") or self._now()
+        row["updated_at"] = self._now()
+        row["status"] = row.get("status") or "unpaid"
+        row["items"] = _json_list(row.get("items")) or "[]"
+        row["subtotal"] = float(row.get("subtotal") or 0)
+        row["tax"] = float(row.get("tax") or 0)
+        row["total"] = float(row.get("total") or 0)
+        conn = self._connect()
+        conn.execute(
+            "INSERT INTO invoices (" + ",".join(_INVOICE_COLS) + ") VALUES ("
+            + ",".join("?" for _ in _INVOICE_COLS) + ")",
+            tuple(row.get(c) for c in _INVOICE_COLS))
+        conn.commit()
+        r = conn.execute("SELECT * FROM invoices WHERE id=?", (row["id"],)).fetchone()
+        conn.close()
+        return self._decode_invoice_row(dict(r)) if r else None
+
+    def get_invoice(self, invoice_id):
+        conn = self._connect()
+        row = conn.execute("SELECT * FROM invoices WHERE id=?", (invoice_id,)).fetchone()
+        conn.close()
+        return self._decode_invoice_row(dict(row)) if row else None
+
+    def list_invoices(self, patient_id=None, doctor_id=None):
+        conn = self._connect()
+        clauses = []
+        args = []
+        if patient_id:
+            clauses.append("patient_id=?")
+            args.append(patient_id)
+        if doctor_id:
+            clauses.append("doctor_id=?")
+            args.append(doctor_id)
+        sql = "SELECT * FROM invoices"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY created_at DESC"
+        rows = conn.execute(sql, tuple(args)).fetchall()
+        conn.close()
+        return [self._decode_invoice_row(dict(r)) for r in rows]
+
+    def update_invoice(self, invoice_id, updates):
+        allowed = {k: v for k, v in (updates or {}).items()
+                   if k in _INVOICE_COLS and k not in ("id", "created_at", "invoice_no")}
+        conn = self._connect()
+        if allowed:
+            allowed["updated_at"] = self._now()
+            set_sql = ",".join(f"{k}=?" for k in allowed)
+            conn.execute(f"UPDATE invoices SET {set_sql} WHERE id=?", (*allowed.values(), invoice_id))
+            conn.commit()
+        row = conn.execute("SELECT * FROM invoices WHERE id=?", (invoice_id,)).fetchone()
+        conn.close()
+        return self._decode_invoice_row(dict(row)) if row else None
+
 
 class SupabaseDB(Database):
     """Supabase backend (requires SUPABASE_URL + keys in .env)."""
@@ -874,6 +1039,20 @@ class SupabaseDB(Database):
             THEN CREATE POLICY "lab_results_select" ON lab_results FOR SELECT USING (true); END IF;
             IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'lab_results'::regclass AND polname = 'lab_results_insert')
             THEN CREATE POLICY "lab_results_insert" ON lab_results FOR INSERT WITH CHECK (true); END IF;
+            ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'notifications'::regclass AND polname = 'notifications_select')
+            THEN CREATE POLICY "notifications_select" ON notifications FOR SELECT USING (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'notifications'::regclass AND polname = 'notifications_insert')
+            THEN CREATE POLICY "notifications_insert" ON notifications FOR INSERT WITH CHECK (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'notifications'::regclass AND polname = 'notifications_update')
+            THEN CREATE POLICY "notifications_update" ON notifications FOR UPDATE USING (true); END IF;
+            ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'invoices'::regclass AND polname = 'invoices_select')
+            THEN CREATE POLICY "invoices_select" ON invoices FOR SELECT USING (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'invoices'::regclass AND polname = 'invoices_insert')
+            THEN CREATE POLICY "invoices_insert" ON invoices FOR INSERT WITH CHECK (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'invoices'::regclass AND polname = 'invoices_update')
+            THEN CREATE POLICY "invoices_update" ON invoices FOR UPDATE USING (true); END IF;
         END $$;
         """
 
@@ -1241,6 +1420,127 @@ class SupabaseDB(Database):
         except Exception as e:
             logger.error(f"Supabase get_recent_lab_results failed: {e}")
             return []
+
+    def create_notification(self, user_id, kind, title, body="", link=""):
+        nid = str(uuid.uuid4())
+        now = self._now()
+        try:
+            r = self.client.table("notifications").insert({
+                "id": nid, "user_id": user_id, "kind": kind, "title": title,
+                "body": body, "link": link, "is_read": False, "created_at": now,
+            }).execute()
+            if r and r.data and len(r.data) > 0:
+                return r.data[0]
+            return {"id": nid, "user_id": user_id, "kind": kind, "title": title,
+                    "body": body, "link": link, "is_read": False, "created_at": now}
+        except Exception as e:
+            logger.error(f"Supabase create_notification failed: {e}")
+            return None
+
+    def get_notifications(self, user_id, unread_only=False, limit=50):
+        try:
+            q = self.client.table("notifications").select("*").eq("user_id", user_id)
+            if unread_only:
+                q = q.eq("is_read", False)
+            r = q.order("created_at", desc=True).limit(limit).execute()
+            return r.data if r and r.data else []
+        except Exception as e:
+            logger.error(f"Supabase get_notifications failed: {e}")
+            return []
+
+    def notifications_unread_count(self, user_id):
+        try:
+            r = self.client.table("notifications").select("id", count="exact") \
+                .eq("user_id", user_id).eq("is_read", False).execute()
+            return int(getattr(r, "count", 0) or 0)
+        except Exception as e:
+            logger.error(f"Supabase notifications_unread_count failed: {e}")
+            return 0
+
+    def mark_notification_read(self, notification_id, user_id):
+        try:
+            r = self.client.table("notifications").update({"is_read": True}) \
+                .eq("id", notification_id).eq("user_id", user_id).execute()
+            return bool(r and r.data)
+        except Exception as e:
+            logger.error(f"Supabase mark_notification_read failed: {e}")
+            return False
+
+    def mark_all_notifications_read(self, user_id):
+        try:
+            self.client.table("notifications").update({"is_read": True}) \
+                .eq("user_id", user_id).execute()
+        except Exception as e:
+            logger.error(f"Supabase mark_all_notifications_read failed: {e}")
+
+    def create_invoice(self, invoice):
+        try:
+            row = dict(invoice)
+            row["id"] = str(row.get("id") or uuid.uuid4())
+            row["created_at"] = row.get("created_at") or self._now()
+            row["updated_at"] = self._now()
+            row["status"] = row.get("status") or "unpaid"
+            if isinstance(row.get("items"), (list, tuple)):
+                row["items"] = json.dumps(list(row["items"]), ensure_ascii=False)
+            row["subtotal"] = float(row.get("subtotal") or 0)
+            row["tax"] = float(row.get("tax") or 0)
+            row["total"] = float(row.get("total") or 0)
+            r = self.client.table("invoices").insert(row).execute()
+            if r and r.data and len(r.data) > 0:
+                return self.get_invoice(r.data[0]["id"])
+            return None
+        except Exception as e:
+            logger.error(f"Supabase create_invoice failed: {e}")
+            return None
+
+    def get_invoice(self, invoice_id):
+        try:
+            r = self.client.table("invoices").select("*").eq("id", invoice_id).execute()
+            d = r.data[0] if r and r.data else None
+            if d:
+                try:
+                    d["items"] = json.loads(d.get("items") or "[]")
+                except Exception:
+                    d["items"] = []
+            return d
+        except Exception as e:
+            logger.error(f"Supabase get_invoice failed: {e}")
+            return None
+
+    def list_invoices(self, patient_id=None, doctor_id=None):
+        try:
+            q = self.client.table("invoices").select("*").order("created_at", desc=True)
+            if patient_id:
+                q = q.eq("patient_id", patient_id)
+            if doctor_id:
+                q = q.eq("doctor_id", doctor_id)
+            r = q.execute()
+            out = []
+            for d in (r.data if r and r.data else []):
+                try:
+                    d["items"] = json.loads(d.get("items") or "[]")
+                except Exception:
+                    d["items"] = []
+                out.append(d)
+            return out
+        except Exception as e:
+            logger.error(f"Supabase list_invoices failed: {e}")
+            return []
+
+    def update_invoice(self, invoice_id, updates):
+        try:
+            upd = {k: v for k, v in (updates or {}).items()
+                   if k in _INVOICE_COLS and k not in ("id", "created_at", "invoice_no")}
+            if "items" in upd and isinstance(upd["items"], list):
+                upd["items"] = json.dumps(upd["items"], ensure_ascii=False)
+            upd["updated_at"] = self._now()
+            r = self.client.table("invoices").update(upd).eq("id", invoice_id).execute()
+            if r and r.data:
+                return self.get_invoice(invoice_id)
+            return None
+        except Exception as e:
+            logger.error(f"Supabase update_invoice failed: {e}")
+            return None
 
 
 def get_db() -> Database:
