@@ -117,3 +117,43 @@ CREATE TABLE IF NOT EXISTS call_bookings (
     FOREIGN KEY (doctor_id) REFERENCES users(id),
     FOREIGN KEY (availability_id) REFERENCES doctor_availability(id)
 );
+
+CREATE TABLE IF NOT EXISTS soap_notes (
+    id TEXT PRIMARY KEY,
+    triage_session_id TEXT NOT NULL,
+    patient_id TEXT,
+    doctor_id TEXT,
+    subjective TEXT DEFAULT '',
+    objective TEXT DEFAULT '',
+    assessment TEXT DEFAULT '',
+    plan TEXT DEFAULT '',
+    full_text TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','signed')),
+    source TEXT DEFAULT 'triage',
+    signed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS prescriptions (
+    id TEXT PRIMARY KEY,
+    patient_id TEXT NOT NULL,
+    doctor_id TEXT,
+    triage_session_id TEXT,
+    items TEXT DEFAULT '[]',
+    warnings TEXT DEFAULT '[]',
+    advice TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','signed')),
+    signed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS lab_results (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    triage_session_id TEXT,
+    filename TEXT DEFAULT '',
+    flags TEXT DEFAULT '[]',
+    created_at TEXT NOT NULL
+);

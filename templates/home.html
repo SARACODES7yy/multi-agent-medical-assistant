@@ -251,6 +251,56 @@
                     <div class="triage-modal-body" id="referral-body"></div>
                 </div>
             </div>
+            <div id="soap-modal" class="triage-modal" style="display:none;">
+                <div class="triage-modal-card">
+                    <div class="triage-modal-head">
+                        <h3><i class="fas fa-file-medical me-2 triage-teal"></i>SOAP Note <span id="soap-status-badge" class="triage-badge triage-badge-status">draft</span></h3>
+                        <button class="triage-modal-close" onclick="closeSoap()"><i class="fas fa-times"></i></button>
+                    </div>
+                    <div class="triage-modal-body">
+                        <p class="triage-card-sub" id="soap-meta"></p>
+                        <div class="triage-form-grid">
+                            <div><label class="triage-stat-label">Subjective</label><textarea class="triage-input triage-textarea" id="soap-s" rows="3" style="min-height:80px;"></textarea></div>
+                            <div><label class="triage-stat-label">Objective</label><textarea class="triage-input triage-textarea" id="soap-o" rows="3" style="min-height:80px;"></textarea></div>
+                            <div><label class="triage-stat-label">Assessment</label><textarea class="triage-input triage-textarea" id="soap-a" rows="3" style="min-height:80px;"></textarea></div>
+                            <div><label class="triage-stat-label">Plan</label><textarea class="triage-input triage-textarea" id="soap-p" rows="3" style="min-height:80px;"></textarea></div>
+                        </div>
+                        <div id="soap-msg" class="triage-hint" style="margin-top:8px;"></div>
+                        <div class="triage-queue-actions" style="margin-top:10px;">
+                            <button class="btn-primary btn-sm" id="soap-generate-btn" onclick="soapGenerate()"><i class="fas fa-wand-magic-sparkles me-1"></i>Generate</button>
+                            <button class="btn-outline btn-sm" id="soap-save-btn" onclick="soapSave(false)"><i class="fas fa-floppy-disk me-1"></i>Save draft</button>
+                            <button class="btn-primary btn-sm" id="soap-sign-btn" onclick="soapSave(true)"><i class="fas fa-signature me-1"></i>Sign</button>
+                            <button class="btn-outline btn-sm" id="soap-pdf-btn" onclick="soapPdf()"><i class="fas fa-file-pdf me-1"></i>Export PDF</button>
+                            <button class="btn-outline btn-sm" onclick="closeSoap()">Close</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div id="rx-modal" class="triage-modal" style="display:none;">
+                <div class="triage-modal-card">
+                    <div class="triage-modal-head">
+                        <h3><i class="fas fa-prescription me-2 triage-violet"></i>Prescription <span id="rx-status-badge" class="triage-badge triage-badge-status">draft</span></h3>
+                        <button class="triage-modal-close" onclick="closeRx()"><i class="fas fa-times"></i></button>
+                    </div>
+                    <div class="triage-modal-body">
+                        <p class="triage-card-sub">Type your prescribing intent (e.g. <em>tab paracetamol 650mg TDS x 5d after food</em>); AI formats it into a structured Rx. Check patient allergies in the warnings below.</p>
+                        <textarea class="triage-input triage-textarea" id="rx-intent" rows="2" style="min-height:60px;" placeholder="Doctor's prescribing intent…"></textarea>
+                        <div style="margin-top:8px;"><button class="btn-primary btn-sm" id="rx-generate-btn" onclick="rxGenerate()"><i class="fas fa-wand-magic-sparkles me-1"></i>Generate Rx</button></div>
+                        <div id="rx-items" style="margin-top:10px;"></div>
+                        <div id="rx-warnings" style="margin-top:8px;"></div>
+                        <label class="triage-stat-label" style="display:block;margin-top:8px;">Advice</label>
+                        <textarea class="triage-input triage-textarea" id="rx-advice" rows="2" style="min-height:60px;"></textarea>
+                        <div id="rx-msg" class="triage-hint" style="margin-top:8px;"></div>
+                        <div class="triage-queue-actions" style="margin-top:10px;">
+                            <button class="btn-outline btn-sm" id="rx-save-btn" onclick="rxSave(false)"><i class="fas fa-floppy-disk me-1"></i>Save draft</button>
+                            <button class="btn-primary btn-sm" id="rx-sign-btn" onclick="rxSave(true)"><i class="fas fa-signature me-1"></i>Sign</button>
+                            <button class="btn-outline btn-sm" id="rx-pdf-btn" onclick="rxPdf()"><i class="fas fa-file-pdf me-1"></i>Export PDF</button>
+                            <button class="btn-outline btn-sm" onclick="closeRx()">Close</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div id="toast-wrap" style="position:fixed;right:18px;bottom:18px;z-index:1200;display:flex;flex-direction:column;gap:8px;"></div>
         </section>
 
         <!-- ANALYTICS -->

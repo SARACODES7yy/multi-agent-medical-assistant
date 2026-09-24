@@ -13,6 +13,37 @@ logger = logging.getLogger(__name__)
 USE_SUPABASE = os.getenv("USE_SUPABASE", "true").lower() == "true"
 
 _TRIAGE_LIST_FIELDS = ("chief_complaints", "red_flags", "missing_info", "followup_questions", "tests")
+_RX_LIST_FIELDS = ("items", "warnings")
+
+_SOAP_COLS = ("id", "triage_session_id", "patient_id", "doctor_id", "subjective",
+              "objective", "assessment", "plan", "full_text", "status", "source",
+              "signed_at", "created_at", "updated_at")
+_RX_COLS = ("id", "patient_id", "doctor_id", "triage_session_id", "items", "warnings",
+            "advice", "status", "signed_at", "created_at", "updated_at")
+_LAB_COLS = ("id", "user_id", "triage_session_id", "filename", "flags", "created_at")
+
+
+def _json_list(v):
+    if isinstance(v, (list, tuple)):
+        return json.dumps(list(v), ensure_ascii=False)
+    return None
+
+
+def _as_list(v):
+    if isinstance(v, str):
+        try:
+            out = json.loads(v)
+            return out if isinstance(out, list) else []
+        except Exception:
+            return []
+    return v if isinstance(v, list) else []
+
+
+def _decode_rx_row(d):
+    out = dict(d)
+    for k in _RX_LIST_FIELDS:
+        out[k] = _as_list(out.get(k))
+    return out
 
 
 def _encode_triage_row(row):
@@ -115,6 +146,39 @@ class Database:
         raise NotImplementedError
 
     def update_booking_status(self, booking_id, status):
+        raise NotImplementedError
+
+    def get_triage_session(self, session_id):
+        raise NotImplementedError
+
+    def save_soap_note(self, note):
+        raise NotImplementedError
+
+    def get_soap_note(self, note_id):
+        raise NotImplementedError
+
+    def get_soap_note_by_session(self, triage_session_id):
+        raise NotImplementedError
+
+    def update_soap_note(self, note_id, updates):
+        raise NotImplementedError
+
+    def save_prescription(self, rx):
+        raise NotImplementedError
+
+    def get_prescription(self, rx_id):
+        raise NotImplementedError
+
+    def update_prescription(self, rx_id, updates):
+        raise NotImplementedError
+
+    def list_prescriptions(self, patient_id=None, limit=50):
+        raise NotImplementedError
+
+    def insert_lab_result(self, user_id, flags, triage_session_id=None, filename=""):
+        raise NotImplementedError
+
+    def get_recent_lab_results(self, user_id=None, limit=100):
         raise NotImplementedError
 
 
@@ -233,10 +297,90 @@ class SQLiteDB(Database):
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS doctor_availability (
+            id TEXT PRIMARY KEY,
+            doctor_id TEXT NOT NULL,
+            date DATE NOT NULL,
+            start_time TIME NOT NULL,
+            end_time TIME NOT NULL,
+            max_slots INTEGER DEFAULT 1,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (doctor_id) REFERENCES users(id)
+        );
+        CREATE TABLE IF NOT EXISTS call_bookings (
+            id TEXT PRIMARY KEY,
+            patient_id TEXT NOT NULL,
+            doctor_id TEXT NOT NULL,
+            availability_id TEXT,
+            scheduled_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'requested' CHECK(status IN ('requested','confirmed','completed','cancelled')),
+            notes TEXT DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (patient_id) REFERENCES users(id),
+            FOREIGN KEY (doctor_id) REFERENCES users(id),
+            FOREIGN KEY (availability_id) REFERENCES doctor_availability(id)
+        );
+        CREATE TABLE IF NOT EXISTS soap_notes (
+            id TEXT PRIMARY KEY,
+            triage_session_id TEXT NOT NULL,
+            patient_id TEXT,
+            doctor_id TEXT,
+            subjective TEXT DEFAULT '',
+            objective TEXT DEFAULT '',
+            assessment TEXT DEFAULT '',
+            plan TEXT DEFAULT '',
+            full_text TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','signed')),
+            source TEXT DEFAULT 'triage',
+            signed_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS prescriptions (
+            id TEXT PRIMARY KEY,
+            patient_id TEXT NOT NULL,
+            doctor_id TEXT,
+            triage_session_id TEXT,
+            items TEXT DEFAULT '[]',
+            warnings TEXT DEFAULT '[]',
+            advice TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','signed')),
+            signed_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS lab_results (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            triage_session_id TEXT,
+            filename TEXT DEFAULT '',
+            flags TEXT DEFAULT '[]',
+            created_at TEXT NOT NULL
+        );
         """)
         conn.commit()
+        self._migrate_columns(conn)
         conn.close()
         logger.info("SQLite schema initialized")
+
+    # Columns added to profiles after the first release; existing DB files get them via ALTER TABLE.
+    _PROFILE_MIGRATION_COLS = (
+        ("gender", "TEXT"), ("blood_group", "TEXT"), ("height", "TEXT"), ("weight", "TEXT"),
+        ("blood_pressure", "TEXT"), ("medications", "TEXT"), ("family_history", "TEXT"),
+        ("surgeries", "TEXT"), ("vaccination", "TEXT"), ("smoking", "TEXT"), ("alcohol", "TEXT"),
+        ("exercise", "TEXT"), ("diet", "TEXT"), ("emergency_name", "TEXT"), ("emergency_phone", "TEXT"),
+    )
+
+    def _migrate_columns(self, conn):
+        existing = {r[1] for r in conn.execute("PRAGMA table_info(profiles)").fetchall()}
+        for col, col_type in self._PROFILE_MIGRATION_COLS:
+            if col not in existing:
+                try:
+                    conn.execute(f"ALTER TABLE profiles ADD COLUMN {col} {col_type}")
+                except Exception as e:
+                    logger.warning(f"profiles migration skipped column {col}: {e}")
+        conn.commit()
 
     def _now(self):
         return datetime.now(timezone.utc).isoformat()
@@ -465,6 +609,149 @@ class SQLiteDB(Database):
         conn.commit(); conn.close()
         return cur.rowcount > 0
 
+    def get_triage_session(self, session_id):
+        conn = self._connect()
+        row = conn.execute("SELECT * FROM triage_sessions WHERE id=?", (session_id,)).fetchone()
+        conn.close()
+        return _decode_triage_row(dict(row)) if row else None
+
+    def save_soap_note(self, note):
+        row = {k: note.get(k) for k in _SOAP_COLS}
+        row["id"] = str(row.get("id") or uuid.uuid4())
+        row["created_at"] = row.get("created_at") or self._now()
+        row["updated_at"] = self._now()
+        row["status"] = row.get("status") or "draft"
+        cols = ",".join(_SOAP_COLS)
+        placeholders = ",".join("?" for _ in _SOAP_COLS)
+        update_set = ",".join(f"{c}=excluded.{c}" for c in _SOAP_COLS if c not in ("id", "created_at"))
+        conn = self._connect()
+        conn.execute(
+            f"INSERT INTO soap_notes ({cols}) VALUES ({placeholders}) ON CONFLICT(id) DO UPDATE SET {update_set}",
+            tuple(row.get(c) for c in _SOAP_COLS)
+        )
+        conn.commit()
+        r = conn.execute("SELECT * FROM soap_notes WHERE id=?", (row["id"],)).fetchone()
+        conn.close()
+        return dict(r) if r else None
+
+    def get_soap_note(self, note_id):
+        conn = self._connect()
+        row = conn.execute("SELECT * FROM soap_notes WHERE id=?", (note_id,)).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def get_soap_note_by_session(self, triage_session_id):
+        conn = self._connect()
+        row = conn.execute(
+            "SELECT * FROM soap_notes WHERE triage_session_id=? ORDER BY updated_at DESC LIMIT 1",
+            (triage_session_id,)
+        ).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def update_soap_note(self, note_id, updates):
+        allowed = {k: v for k, v in (updates or {}).items()
+                   if k in _SOAP_COLS and k not in ("id", "created_at")}
+        conn = self._connect()
+        if allowed:
+            allowed["updated_at"] = self._now()
+            set_sql = ",".join(f"{k}=?" for k in allowed)
+            conn.execute(f"UPDATE soap_notes SET {set_sql} WHERE id=?", (*allowed.values(), note_id))
+            conn.commit()
+        row = conn.execute("SELECT * FROM soap_notes WHERE id=?", (note_id,)).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def save_prescription(self, rx):
+        row = {k: rx.get(k) for k in _RX_COLS}
+        row["id"] = str(row.get("id") or uuid.uuid4())
+        row["created_at"] = row.get("created_at") or self._now()
+        row["updated_at"] = self._now()
+        row["status"] = row.get("status") or "draft"
+        for k in _RX_LIST_FIELDS:
+            row[k] = _json_list(row.get(k)) or "[]"
+        cols = ",".join(_RX_COLS)
+        placeholders = ",".join("?" for _ in _RX_COLS)
+        update_set = ",".join(f"{c}=excluded.{c}" for c in _RX_COLS if c not in ("id", "created_at"))
+        conn = self._connect()
+        conn.execute(
+            f"INSERT INTO prescriptions ({cols}) VALUES ({placeholders}) ON CONFLICT(id) DO UPDATE SET {update_set}",
+            tuple(row.get(c) for c in _RX_COLS)
+        )
+        conn.commit()
+        r = conn.execute("SELECT * FROM prescriptions WHERE id=?", (row["id"],)).fetchone()
+        conn.close()
+        return _decode_rx_row(dict(r)) if r else None
+
+    def get_prescription(self, rx_id):
+        conn = self._connect()
+        row = conn.execute("SELECT * FROM prescriptions WHERE id=?", (rx_id,)).fetchone()
+        conn.close()
+        return _decode_rx_row(dict(row)) if row else None
+
+    def update_prescription(self, rx_id, updates):
+        allowed = {k: v for k, v in (updates or {}).items()
+                   if k in _RX_COLS and k not in ("id", "created_at")}
+        for k in _RX_LIST_FIELDS:
+            if k in allowed:
+                allowed[k] = _json_list(allowed.get(k)) or "[]"
+        conn = self._connect()
+        if allowed:
+            allowed["updated_at"] = self._now()
+            set_sql = ",".join(f"{k}=?" for k in allowed)
+            conn.execute(f"UPDATE prescriptions SET {set_sql} WHERE id=?", (*allowed.values(), rx_id))
+            conn.commit()
+        row = conn.execute("SELECT * FROM prescriptions WHERE id=?", (rx_id,)).fetchone()
+        conn.close()
+        return _decode_rx_row(dict(row)) if row else None
+
+    def list_prescriptions(self, patient_id=None, limit=50):
+        conn = self._connect()
+        if patient_id:
+            rows = conn.execute(
+                "SELECT * FROM prescriptions WHERE patient_id=? ORDER BY created_at DESC LIMIT ?",
+                (patient_id, limit)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM prescriptions ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        conn.close()
+        return [_decode_rx_row(dict(r)) for r in rows]
+
+    def insert_lab_result(self, user_id, flags, triage_session_id=None, filename=""):
+        lab_id = str(uuid.uuid4())
+        row = {"id": lab_id, "user_id": user_id, "triage_session_id": triage_session_id,
+               "filename": filename or "", "flags": _json_list(flags) or "[]",
+               "created_at": self._now()}
+        conn = self._connect()
+        conn.execute(
+            "INSERT INTO lab_results (id,user_id,triage_session_id,filename,flags,created_at) VALUES (?,?,?,?,?,?)",
+            (row["id"], row["user_id"], row["triage_session_id"], row["filename"], row["flags"], row["created_at"])
+        )
+        conn.commit(); conn.close()
+        row["flags"] = _as_list(row["flags"])
+        return row
+
+    def get_recent_lab_results(self, user_id=None, limit=100):
+        conn = self._connect()
+        if user_id:
+            rows = conn.execute(
+                "SELECT * FROM lab_results WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+                (user_id, limit)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM lab_results ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        conn.close()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["flags"] = _as_list(d.get("flags"))
+            out.append(d)
+        return out
+
 
 class SupabaseDB(Database):
     """Supabase backend (requires SUPABASE_URL + keys in .env)."""
@@ -564,6 +851,29 @@ class SupabaseDB(Database):
             THEN CREATE POLICY "call_bookings_update" ON call_bookings FOR UPDATE USING (true); END IF;
             IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'call_bookings'::regclass AND polname = 'call_bookings_delete')
             THEN CREATE POLICY "call_bookings_delete" ON call_bookings FOR DELETE USING (true); END IF;
+            ALTER TABLE soap_notes ENABLE ROW LEVEL SECURITY;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'soap_notes'::regclass AND polname = 'soap_notes_select')
+            THEN CREATE POLICY "soap_notes_select" ON soap_notes FOR SELECT USING (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'soap_notes'::regclass AND polname = 'soap_notes_insert')
+            THEN CREATE POLICY "soap_notes_insert" ON soap_notes FOR INSERT WITH CHECK (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'soap_notes'::regclass AND polname = 'soap_notes_update')
+            THEN CREATE POLICY "soap_notes_update" ON soap_notes FOR UPDATE USING (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'soap_notes'::regclass AND polname = 'soap_notes_delete')
+            THEN CREATE POLICY "soap_notes_delete" ON soap_notes FOR DELETE USING (true); END IF;
+            ALTER TABLE prescriptions ENABLE ROW LEVEL SECURITY;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'prescriptions'::regclass AND polname = 'prescriptions_select')
+            THEN CREATE POLICY "prescriptions_select" ON prescriptions FOR SELECT USING (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'prescriptions'::regclass AND polname = 'prescriptions_insert')
+            THEN CREATE POLICY "prescriptions_insert" ON prescriptions FOR INSERT WITH CHECK (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'prescriptions'::regclass AND polname = 'prescriptions_update')
+            THEN CREATE POLICY "prescriptions_update" ON prescriptions FOR UPDATE USING (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'prescriptions'::regclass AND polname = 'prescriptions_delete')
+            THEN CREATE POLICY "prescriptions_delete" ON prescriptions FOR DELETE USING (true); END IF;
+            ALTER TABLE lab_results ENABLE ROW LEVEL SECURITY;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'lab_results'::regclass AND polname = 'lab_results_select')
+            THEN CREATE POLICY "lab_results_select" ON lab_results FOR SELECT USING (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'lab_results'::regclass AND polname = 'lab_results_insert')
+            THEN CREATE POLICY "lab_results_insert" ON lab_results FOR INSERT WITH CHECK (true); END IF;
         END $$;
         """
 
@@ -800,6 +1110,137 @@ class SupabaseDB(Database):
         except Exception as e:
             logger.error(f"Supabase update_booking_status failed: {e}")
             return False
+
+    def get_triage_session(self, session_id):
+        try:
+            r = self.client.table("triage_sessions").select("*").eq("id", session_id).execute()
+            return _decode_triage_row(r.data[0]) if r and r.data else None
+        except Exception as e:
+            logger.error(f"Supabase get_triage_session failed: {e}")
+            return None
+
+    def save_soap_note(self, note):
+        row = {k: note.get(k) for k in _SOAP_COLS}
+        row["id"] = str(row.get("id") or uuid.uuid4())
+        row["created_at"] = row.get("created_at") or self._now()
+        row["updated_at"] = self._now()
+        row["status"] = row.get("status") or "draft"
+        try:
+            r = self.client.table("soap_notes").upsert(row).execute()
+            return r.data[0] if r and r.data else None
+        except Exception as e:
+            logger.error(f"Supabase save_soap_note failed: {e}")
+            return None
+
+    def get_soap_note(self, note_id):
+        try:
+            r = self.client.table("soap_notes").select("*").eq("id", note_id).execute()
+            return r.data[0] if r and r.data else None
+        except Exception as e:
+            logger.error(f"Supabase get_soap_note failed: {e}")
+            return None
+
+    def get_soap_note_by_session(self, triage_session_id):
+        try:
+            r = self.client.table("soap_notes").select("*") \
+                .eq("triage_session_id", triage_session_id) \
+                .order("updated_at", desc=True).limit(1).execute()
+            return r.data[0] if r and r.data else None
+        except Exception as e:
+            logger.error(f"Supabase get_soap_note_by_session failed: {e}")
+            return None
+
+    def update_soap_note(self, note_id, updates):
+        allowed = {k: v for k, v in (updates or {}).items()
+                   if k in _SOAP_COLS and k not in ("id", "created_at")}
+        if not allowed:
+            return self.get_soap_note(note_id)
+        allowed["updated_at"] = self._now()
+        try:
+            r = self.client.table("soap_notes").update(allowed).eq("id", note_id).execute()
+            return r.data[0] if r and r.data else None
+        except Exception as e:
+            logger.error(f"Supabase update_soap_note failed: {e}")
+            return None
+
+    def save_prescription(self, rx):
+        row = {k: rx.get(k) for k in _RX_COLS}
+        row["id"] = str(row.get("id") or uuid.uuid4())
+        row["created_at"] = row.get("created_at") or self._now()
+        row["updated_at"] = self._now()
+        row["status"] = row.get("status") or "draft"
+        for k in _RX_LIST_FIELDS:
+            row[k] = _json_list(row.get(k)) or "[]"
+        try:
+            r = self.client.table("prescriptions").upsert(row).execute()
+            return _decode_rx_row(r.data[0]) if r and r.data else None
+        except Exception as e:
+            logger.error(f"Supabase save_prescription failed: {e}")
+            return None
+
+    def get_prescription(self, rx_id):
+        try:
+            r = self.client.table("prescriptions").select("*").eq("id", rx_id).execute()
+            return _decode_rx_row(r.data[0]) if r and r.data else None
+        except Exception as e:
+            logger.error(f"Supabase get_prescription failed: {e}")
+            return None
+
+    def update_prescription(self, rx_id, updates):
+        allowed = {k: v for k, v in (updates or {}).items()
+                   if k in _RX_COLS and k not in ("id", "created_at")}
+        for k in _RX_LIST_FIELDS:
+            if k in allowed:
+                allowed[k] = _json_list(allowed.get(k)) or "[]"
+        if not allowed:
+            return self.get_prescription(rx_id)
+        allowed["updated_at"] = self._now()
+        try:
+            r = self.client.table("prescriptions").update(allowed).eq("id", rx_id).execute()
+            return _decode_rx_row(r.data[0]) if r and r.data else None
+        except Exception as e:
+            logger.error(f"Supabase update_prescription failed: {e}")
+            return None
+
+    def list_prescriptions(self, patient_id=None, limit=50):
+        try:
+            q = self.client.table("prescriptions").select("*")
+            if patient_id:
+                q = q.eq("patient_id", patient_id)
+            r = q.order("created_at", desc=True).limit(limit).execute()
+            return [_decode_rx_row(d) for d in (r.data if r and r.data else [])]
+        except Exception as e:
+            logger.error(f"Supabase list_prescriptions failed: {e}")
+            return []
+
+    def insert_lab_result(self, user_id, flags, triage_session_id=None, filename=""):
+        try:
+            row = {"id": str(uuid.uuid4()), "user_id": user_id, "triage_session_id": triage_session_id,
+                   "filename": filename or "", "flags": _json_list(flags) or "[]", "created_at": self._now()}
+            r = self.client.table("lab_results").insert(row).execute()
+            if r and r.data:
+                d = dict(r.data[0])
+                d["flags"] = _as_list(d.get("flags"))
+                return d
+            return None
+        except Exception as e:
+            logger.error(f"Supabase insert_lab_result failed: {e}")
+            return None
+
+    def get_recent_lab_results(self, user_id=None, limit=100):
+        try:
+            q = self.client.table("lab_results").select("*")
+            if user_id:
+                q = q.eq("user_id", user_id)
+            r = q.order("created_at", desc=True).limit(limit).execute()
+            out = []
+            for d in (r.data if r and r.data else []):
+                d["flags"] = _as_list(d.get("flags"))
+                out.append(d)
+            return out
+        except Exception as e:
+            logger.error(f"Supabase get_recent_lab_results failed: {e}")
+            return []
 
 
 def get_db() -> Database:

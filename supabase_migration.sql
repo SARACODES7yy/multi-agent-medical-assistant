@@ -193,3 +193,70 @@ DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'call_bookings'::regclass AND polname = 'call_bookings_delete')
     THEN CREATE POLICY "call_bookings_delete" ON call_bookings FOR DELETE USING (true); END IF;
 END $$;
+
+-- Clinical documentation tables (SOAP notes, prescriptions, lab flags)
+CREATE TABLE IF NOT EXISTS soap_notes (
+    id TEXT PRIMARY KEY,
+    triage_session_id TEXT NOT NULL,
+    patient_id TEXT,
+    doctor_id TEXT,
+    subjective TEXT DEFAULT '',
+    objective TEXT DEFAULT '',
+    assessment TEXT DEFAULT '',
+    plan TEXT DEFAULT '',
+    full_text TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','signed')),
+    source TEXT DEFAULT 'triage',
+    signed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+ALTER TABLE soap_notes ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS prescriptions (
+    id TEXT PRIMARY KEY,
+    patient_id TEXT NOT NULL,
+    doctor_id TEXT,
+    triage_session_id TEXT,
+    items TEXT DEFAULT '[]',
+    warnings TEXT DEFAULT '[]',
+    advice TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','signed')),
+    signed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+ALTER TABLE prescriptions ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS lab_results (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    triage_session_id TEXT,
+    filename TEXT DEFAULT '',
+    flags TEXT DEFAULT '[]',
+    created_at TEXT NOT NULL
+);
+ALTER TABLE lab_results ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'soap_notes'::regclass AND polname = 'soap_notes_select')
+    THEN CREATE POLICY "soap_notes_select" ON soap_notes FOR SELECT USING (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'soap_notes'::regclass AND polname = 'soap_notes_insert')
+    THEN CREATE POLICY "soap_notes_insert" ON soap_notes FOR INSERT WITH CHECK (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'soap_notes'::regclass AND polname = 'soap_notes_update')
+    THEN CREATE POLICY "soap_notes_update" ON soap_notes FOR UPDATE USING (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'soap_notes'::regclass AND polname = 'soap_notes_delete')
+    THEN CREATE POLICY "soap_notes_delete" ON soap_notes FOR DELETE USING (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'prescriptions'::regclass AND polname = 'prescriptions_select')
+    THEN CREATE POLICY "prescriptions_select" ON prescriptions FOR SELECT USING (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'prescriptions'::regclass AND polname = 'prescriptions_insert')
+    THEN CREATE POLICY "prescriptions_insert" ON prescriptions FOR INSERT WITH CHECK (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'prescriptions'::regclass AND polname = 'prescriptions_update')
+    THEN CREATE POLICY "prescriptions_update" ON prescriptions FOR UPDATE USING (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'prescriptions'::regclass AND polname = 'prescriptions_delete')
+    THEN CREATE POLICY "prescriptions_delete" ON prescriptions FOR DELETE USING (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'lab_results'::regclass AND polname = 'lab_results_select')
+    THEN CREATE POLICY "lab_results_select" ON lab_results FOR SELECT USING (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'lab_results'::regclass AND polname = 'lab_results_insert')
+    THEN CREATE POLICY "lab_results_insert" ON lab_results FOR INSERT WITH CHECK (true); END IF;
+END $$;

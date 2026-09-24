@@ -1,6 +1,7 @@
 import os
 import sys
 import uuid
+import json
 import asyncio
 import tempfile
 import logging
@@ -57,10 +58,13 @@ from elevenlabs.client import ElevenLabs
 from config import Config
 from agents.agent_decision import process_query, get_graph
 from agents.image_analysis_agent import ImageAnalysisAgent as _ImageAnalysisAgent
+from agents.soap_agent import SOAPGenerator
+from agents.prescription_agent import PrescriptionAgent
 from auth import AuthManager, create_session_cookie, verify_session_cookie
 from models.db import get_db, Database
 from models.patient_rag import PatientRAG
 from utils.pdf_extract import extract_pdf_text
+from utils.pdf_export import build_soap_pdf, build_prescription_pdf
 
 # Module-level image agent (lazy): avoids re-loading OCR/LLM models per request.
 _image_agent: _ImageAnalysisAgent | None = None
@@ -70,6 +74,22 @@ def _get_image_agent() -> _ImageAnalysisAgent:
     if _image_agent is None:
         _image_agent = _ImageAnalysisAgent(config=config)
     return _image_agent
+
+# Lazy clinical documentation agents (share the conversation LLM; light to build).
+_soap_generator: SOAPGenerator | None = None
+_rx_agent: PrescriptionAgent | None = None
+
+def _get_soap_generator() -> SOAPGenerator:
+    global _soap_generator
+    if _soap_generator is None:
+        _soap_generator = SOAPGenerator(config)
+    return _soap_generator
+
+def _get_rx_agent() -> PrescriptionAgent:
+    global _rx_agent
+    if _rx_agent is None:
+        _rx_agent = PrescriptionAgent(config)
+    return _rx_agent
 
 # Load configuration
 logger = logging.getLogger(__name__)
@@ -425,6 +445,7 @@ async def chat(
         if user_id:
             db.add_message(user_id, "user", query_text or "Uploaded a medical image")
             db.add_message(user_id, "assistant", response_text, agent=agent_name)
+            _persist_lab_flags(user_id, response_text, filename=filename_str)
         result = {"status": "success", "response": response_text, "agent": agent_name}
 
         # Attach the structured JSON block (if the agent returned one) so the
@@ -613,6 +634,7 @@ async def upload_file(
             if user_id:
                 db.add_message(user_id, "user", text or "Uploaded a medical image")
                 db.add_message(user_id, "assistant", response_text, agent=agent_name)
+                _persist_lab_flags(user_id, response_text, filename=filename)
 
             result = {
                 "status": "success",
@@ -666,6 +688,47 @@ def augment_query(query: str, session_id: Optional[str] = Cookie(None)) -> str:
     if ctx:
         return f"[PATIENT CONTEXT]\n{ctx}\n\n[USER QUESTION]\n{query}"
     return query
+
+
+def _extract_json_block(text: str) -> Optional[dict]:
+    """Extract the first balanced JSON object from an LLM response (or None)."""
+    import json as _json
+    t = text or ""
+    b = t.find("{")
+    if b < 0:
+        return None
+    depth = 0; end = -1; in_str = False; esc = False
+    for i in range(b, len(t)):
+        ch = t[i]
+        if in_str:
+            if esc: esc = False
+            elif ch == "\\": esc = True
+            elif ch == '"': in_str = False
+        else:
+            if ch == '"': in_str = True
+            elif ch == "{": depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0: end = i; break
+    if end > b:
+        try:
+            return _json.loads(t[b:end + 1])
+        except Exception:
+            return None
+    return None
+
+
+def _persist_lab_flags(user_id, response_text, filename=""):
+    """Best-effort persistence of OCR abnormal_flags into lab_results (worklist ranking)."""
+    if not user_id:
+        return
+    try:
+        block = _extract_json_block(response_text)
+        flags = block.get("abnormal_flags") if isinstance(block, dict) else None
+        if flags:
+            db.insert_lab_result(user_id, flags, filename=filename)
+    except Exception as e:
+        logger.warning(f"lab flag persistence skipped: {e}")
 
 @app.post("/patient/instruction")
 def patient_instruction(
@@ -925,6 +988,296 @@ async def update_checkup(checkup_id: str, request: Request, session_id: Optional
     if not ok:
         raise HTTPException(status_code=404, detail="Checkup not found")
     return {"status": "success"}
+
+
+# ---------- Doctor worklist (risk + critical-lab priority queue) ----------
+
+_RISK_RANK = {"emergency": 0, "urgent": 1, "standard": 2, "routine": 3}
+_QUEUE_STATUS_RANK = {"requested": 0, "scheduled": 1, "completed": 2}
+
+def _lab_severity(flags) -> int:
+    """0 none, 1 abnormal, 2 critical — from OCR abnormal_flags entries."""
+    worst = 0
+    for f in flags or []:
+        text = (f if isinstance(f, str) else json.dumps(f, ensure_ascii=False)).lower()
+        if isinstance(f, dict):
+            text = " ".join(str(v) for v in f.values()).lower()
+        if "critical" in text or "severe" in text:
+            worst = max(worst, 2)
+        else:
+            worst = max(worst, 1)
+    return worst
+
+@app.get("/api/doctor/worklist")
+def doctor_worklist(session_id: Optional[str] = Cookie(None)):
+    """Server-side priority queue: critical labs first, then triage risk, then queue status."""
+    payload = verify_session_cookie(session_id)
+    if not payload or payload["role"] not in ("doctor", "nurse"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        labs = db.get_recent_lab_results(limit=200)
+    except Exception as e:
+        logger.warning(f"worklist lab load failed: {e}")
+        labs = []
+    labs_by_user: Dict[str, dict] = {}
+    for lab in labs:
+        uid = lab.get("user_id")
+        if not uid:
+            continue
+        cur = labs_by_user.get(uid)
+        sev = _lab_severity(lab.get("flags"))
+        if not cur or sev > _lab_severity(cur.get("flags") or []) or (lab.get("created_at") or "") > (cur.get("created_at") or ""):
+            labs_by_user[uid] = lab
+
+    result = []
+    for c in db.get_checkups():
+        p = db.get_user(c["patient_id"])
+        prof = db.get_profile(c["patient_id"]) or {}
+        result.append({
+            **c,
+            "type": "checkup",
+            "patient_name": prof.get("name", "") or (p.get("email", "") if p else c["patient_id"]),
+        })
+    try:
+        for s in db.get_triage_sessions(limit=200):
+            owner = db.get_user(s["user_id"]) if s.get("user_id") else None
+            prof = db.get_profile(s["user_id"]) if s.get("user_id") else None
+            result.append({
+                **s,
+                "type": "triage",
+                "patient_name": (prof or {}).get("name", "") or (owner.get("email", "") if owner else ""),
+            })
+    except Exception as e:
+        logger.warning(f"Failed to load triage sessions for worklist: {e}")
+
+    for row in result:
+        lab = labs_by_user.get(row.get("patient_id") or row.get("user_id"))
+        row["lab_flags"] = (lab or {}).get("flags") or []
+        row["lab_severity"] = _lab_severity(row["lab_flags"])
+        row["lab_filename"] = (lab or {}).get("filename") or ""
+
+    # Stable sorts: newest first, then priority (critical labs > risk > queue status).
+    result.sort(key=lambda r: (r.get("created_at") or ""), reverse=True)
+    result.sort(key=lambda r: (-r.get("lab_severity", 0), _RISK_RANK.get(r.get("risk"), 2), _QUEUE_STATUS_RANK.get(r.get("status"), 1)))
+    return {"status": "ok", "worklist": result}
+
+
+# ---------- SOAP notes ----------
+
+@app.post("/api/triage/session/{ts_id}/soap")
+async def generate_soap_note(ts_id: str, request: Request, session_id: Optional[str] = Cookie(None)):
+    """AI-draft a SOAP note from a triage session + chat history + profile.
+
+    If the request body carries the four sections, they are saved verbatim as a
+    draft instead (doctor hand-authored / pre-edited note, no LLM call).
+    """
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if payload["role"] not in ("doctor", "nurse"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    triage = db.get_triage_session(ts_id)
+    if not triage:
+        raise HTTPException(status_code=404, detail="Triage session not found")
+    patient_id = triage.get("user_id")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if isinstance(body, dict) and any(k in body for k in ("subjective", "objective", "assessment", "plan")):
+        soap = {k: str(body.get(k) or "Not documented")
+                for k in ("subjective", "objective", "assessment", "plan")}
+    else:
+        chat = db.get_chat_history(patient_id, limit=30) if patient_id else []
+        profile = db.get_profile(patient_id) if patient_id else {}
+        soap = await run_in_threadpool(_get_soap_generator().generate, triage, chat, profile)
+    now = datetime.now(timezone.utc).isoformat()
+    note = {
+        "id": str(uuid.uuid4()),
+        "triage_session_id": ts_id,
+        "patient_id": patient_id,
+        "doctor_id": payload["user_id"],
+        "subjective": soap["subjective"],
+        "objective": soap["objective"],
+        "assessment": soap["assessment"],
+        "plan": soap["plan"],
+        "full_text": SOAPGenerator.to_full_text(soap),
+        "status": "draft",
+        "source": "triage",
+        "signed_at": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    saved = db.save_soap_note(note)
+    if not saved:
+        raise HTTPException(status_code=500, detail="Failed to save SOAP note")
+    return {"status": "ok", "note": saved}
+
+@app.get("/api/triage/session/{ts_id}/soap")
+def get_soap_for_session(ts_id: str, session_id: Optional[str] = Cookie(None)):
+    """Fetch the latest SOAP note for a triage session."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    note = db.get_soap_note_by_session(ts_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="No SOAP note for this session")
+    return {"status": "ok", "note": note}
+
+@app.patch("/api/soap/{note_id}")
+async def update_soap_note(note_id: str, request: Request, session_id: Optional[str] = Cookie(None)):
+    """Doctor edits sections and/or signs the note."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if payload["role"] not in ("doctor", "nurse"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    existing = db.get_soap_note(note_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="SOAP note not found")
+    body = await request.json()
+    updates = {}
+    for k in ("subjective", "objective", "assessment", "plan"):
+        if k in body:
+            updates[k] = str(body.get(k) or "Not documented")
+    if body.get("sign"):
+        updates["status"] = "signed"
+        updates["signed_at"] = datetime.now(timezone.utc).isoformat()
+        updates["doctor_id"] = payload["user_id"]
+    if updates:
+        merged = {**existing, **updates}
+        merged["full_text"] = SOAPGenerator.to_full_text(merged)
+        updates["full_text"] = merged["full_text"]
+    note = db.update_soap_note(note_id, updates)
+    if not note:
+        raise HTTPException(status_code=404, detail="SOAP note not found")
+    return {"status": "ok", "note": note}
+
+@app.get("/api/soap/{note_id}/pdf")
+def soap_note_pdf(note_id: str, session_id: Optional[str] = Cookie(None)):
+    """Branded PDF export of a SOAP note."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    note = db.get_soap_note(note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="SOAP note not found")
+    doctor_profile = db.get_profile(note.get("doctor_id")) if note.get("doctor_id") else None
+    patient_label = ""
+    if note.get("patient_id"):
+        prof = db.get_profile(note["patient_id"]) or {}
+        user = db.get_user(note["patient_id"]) or {}
+        patient_label = prof.get("name") or user.get("email", "")
+    pdf = build_soap_pdf(note, doctor_profile, patient_label)
+    if not pdf:
+        raise HTTPException(status_code=500, detail="PDF rendering failed")
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="soap_note_{note_id[:8]}.pdf"'},
+    )
+
+
+# ---------- Prescriptions ----------
+
+class PrescriptionGenerateRequest(BaseModel):
+    patient_id: str
+    triage_session_id: Optional[str] = None
+    intent: str
+
+@app.post("/api/prescription/generate")
+async def generate_prescription(req: PrescriptionGenerateRequest, session_id: Optional[str] = Cookie(None)):
+    """AI-format the doctor's prescribing intent into a structured prescription draft."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if payload["role"] not in ("doctor", "nurse"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if not req.intent.strip():
+        raise HTTPException(status_code=400, detail="intent required")
+    profile = db.get_profile(req.patient_id) or {}
+    triage = db.get_triage_session(req.triage_session_id) if req.triage_session_id else None
+    rx_data = await run_in_threadpool(_get_rx_agent().generate, req.intent, profile, triage or {})
+    rx = db.save_prescription({
+        "patient_id": req.patient_id,
+        "doctor_id": payload["user_id"],
+        "triage_session_id": req.triage_session_id,
+        "items": rx_data["items"],
+        "warnings": rx_data["warnings"],
+        "advice": rx_data["advice"],
+        "status": "draft",
+    })
+    if not rx:
+        raise HTTPException(status_code=500, detail="Failed to save prescription")
+    return {"status": "ok", "prescription": rx}
+
+@app.get("/api/prescriptions")
+def list_prescriptions(patient_id: Optional[str] = None, session_id: Optional[str] = Cookie(None)):
+    """List prescriptions; patients are always scoped to their own."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if payload["role"] == "patient":
+        patient_id = payload["user_id"]
+    elif not patient_id:
+        raise HTTPException(status_code=400, detail="patient_id required")
+    rows = db.list_prescriptions(patient_id)
+    return {"status": "ok", "prescriptions": rows}
+
+@app.patch("/api/prescription/{rx_id}")
+async def update_prescription(rx_id: str, request: Request, session_id: Optional[str] = Cookie(None)):
+    """Doctor edits items/advice and/or signs the prescription."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if payload["role"] not in ("doctor", "nurse"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    existing = db.get_prescription(rx_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Prescription not found")
+    body = await request.json()
+    updates = {}
+    if "items" in body and isinstance(body["items"], list):
+        updates["items"] = body["items"]
+    if "warnings" in body and isinstance(body["warnings"], list):
+        updates["warnings"] = body["warnings"]
+    if "advice" in body:
+        updates["advice"] = str(body.get("advice") or "")
+    if body.get("sign"):
+        updates["status"] = "signed"
+        updates["signed_at"] = datetime.now(timezone.utc).isoformat()
+        updates["doctor_id"] = payload["user_id"]
+    rx = db.update_prescription(rx_id, updates)
+    if not rx:
+        raise HTTPException(status_code=404, detail="Prescription not found")
+    return {"status": "ok", "prescription": rx}
+
+@app.get("/api/prescription/{rx_id}/pdf")
+def prescription_pdf(rx_id: str, session_id: Optional[str] = Cookie(None)):
+    """Branded PDF export of a prescription."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    rx = db.get_prescription(rx_id)
+    if not rx:
+        raise HTTPException(status_code=404, detail="Prescription not found")
+    if payload["role"] == "patient" and rx.get("patient_id") != payload["user_id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    doctor_profile = db.get_profile(rx.get("doctor_id")) if rx.get("doctor_id") else None
+    patient_label = ""
+    if rx.get("patient_id"):
+        prof = db.get_profile(rx["patient_id"]) or {}
+        user = db.get_user(rx["patient_id"]) or {}
+        patient_label = prof.get("name") or user.get("email", "")
+    pdf = build_prescription_pdf(rx, doctor_profile, patient_label)
+    if not pdf:
+        raise HTTPException(status_code=500, detail="PDF rendering failed")
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="prescription_{rx_id[:8]}.pdf"'},
+    )
 
 @app.get("/api/doctor/doctors")
 def get_doctors(session_id: Optional[str] = Cookie(None)):

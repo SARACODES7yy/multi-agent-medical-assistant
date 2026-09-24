@@ -700,20 +700,44 @@ async function batchValidate() {
 async function refreshQueue() {
   if (!state.isStaff) return;
   $('#queue-skeleton').style.display = ''; $('#queue-list').innerHTML = '';
+  var all = [];
   try {
-    var d = await fetch('/api/doctor/checkups', { credentials: 'include' });
+    var d = await fetch('/api/doctor/worklist', { credentials: 'include' });
     var j = await d.json();
-    var all = (j.status === 'ok' && j.checkups) ? j.checkups : [];
-    state.queueServer = all.filter(function(c) { return c.type !== 'triage'; });
-    state.queueSessions = all.filter(function(c) { return c.type === 'triage'; });
-  } catch (e) { state.queueServer = []; state.queueSessions = []; }
+    if (j.status === 'ok' && j.worklist) all = j.worklist;
+  } catch (e) {}
+  if (!all.length) {
+    try {
+      var d2 = await fetch('/api/doctor/checkups', { credentials: 'include' });
+      var j2 = await d2.json();
+      all = (j2.status === 'ok' && j2.checkups) ? j2.checkups : [];
+    } catch (e) { all = []; }
+  }
+  state.queueServer = all.filter(function(c) { return c.type !== 'triage'; });
+  state.queueSessions = all.filter(function(c) { return c.type === 'triage'; });
+  checkCriticalLabs(all);
   state.queueLoaded = true; addAudit('queue_view', 'Reviewer queue refreshed (' + (state.queueServer.length + state.queueSessions.length) + ' server items).'); renderQueue();
+}
+function checkCriticalLabs(items) {
+  var keys = {};
+  (items || []).forEach(function(i) { if ((i.lab_severity || 0) >= 2) keys[i.id || i.code] = (i.patient_name || i.anonym_code || i.code || 'unknown patient'); });
+  var prev = state.lastCriticalLabs || {};
+  Object.keys(keys).forEach(function(k) { if (!prev[k]) showToast('<i class="fas fa-vial-circle-check me-1"></i><strong>Critical lab result:</strong> ' + esc(keys[k]), true); });
+  state.lastCriticalLabs = keys;
+}
+function showToast(html, sticky) {
+  var wrap = $('#toast-wrap'); if (!wrap) return;
+  var t = document.createElement('div');
+  t.className = 'triage-toast' + (sticky ? ' triage-toast-critical' : '');
+  t.innerHTML = html + '<button class="triage-toast-close" onclick="this.parentNode.remove()"><i class="fas fa-times"></i></button>';
+  wrap.appendChild(t);
+  setTimeout(function() { if (t.parentNode) t.remove(); }, sticky ? 20000 : 6000);
 }
 function mergedQueue() {
   var items = []; var seen = {};
   state.queueSessions.forEach(function(s) {
     if (!s.id || seen[s.id]) return; seen[s.id] = true;
-    items.push({ id: s.id, code: s.anonym_code || s.id.slice(0, 8), createdAt: s.created_at || s.createdAt || '', risk: s.risk || 'standard', score: s.score || 0, status: s.status || 'requested', src: 'server', type: 'triage', patient_id: s.user_id || null, patientName: s.patient_name || '', narrative: s.narrative || '', facility: s.facility || '', scenario: s.scenario || '', facilityName: s.facility_name || '', summary: s.summary || '', timeline: s.timeline || '', chiefComplaints: parseList(s.chief_complaints), redFlags: parseList(s.red_flags), missingInfo: parseList(s.missing_info), followupQuestions: parseList(s.followup_questions), tests: parseList(s.tests), followUpDate: s.follow_up_date || null });
+    items.push({ id: s.id, code: s.anonym_code || s.id.slice(0, 8), createdAt: s.created_at || s.createdAt || '', risk: s.risk || 'standard', score: s.score || 0, status: s.status || 'requested', src: 'server', type: 'triage', patient_id: s.user_id || null, patientName: s.patient_name || '', narrative: s.narrative || '', facility: s.facility || '', scenario: s.scenario || '', facilityName: s.facility_name || '', summary: s.summary || '', timeline: s.timeline || '', chiefComplaints: parseList(s.chief_complaints), redFlags: parseList(s.red_flags), missingInfo: parseList(s.missing_info), followupQuestions: parseList(s.followup_questions), tests: parseList(s.tests), followUpDate: s.follow_up_date || null, labFlags: s.lab_flags || [], labSeverity: s.lab_severity || 0 });
   });
   state.queueServer.forEach(function(c) {
     if (!c.id || seen[c.id]) return; seen[c.id] = true;
@@ -742,7 +766,10 @@ function renderQueue() {
   items.forEach(function(item) {
     var rw = riskWeight(item.risk); var rm = RISK_META[item.risk]; var sm = STATUS_META[item.status] || STATUS_META.requested;
     var _fu = followUpPill(item); var fuHtml = (_fu && _fu.html) ? _fu.html : '';
-    html += '<div class="triage-queue-row triage-queue-row-risk-' + item.risk + '"><button class="triage-queue-row-head" data-code="' + esc(item.code) + '"><span class="triage-queue-dot" style="background:' + rm.color + '"></span><div class="triage-queue-main"><div class="triage-queue-title"><span class="triage-code">' + esc(item.code) + '</span> <span class="triage-badge triage-badge-risk-' + item.risk + '">' + esc(rm.label) + '</span> <span class="triage-badge triage-badge-status">' + esc(sm.label) + '</span>' + fuHtml + (item.patientName ? '<span class="triage-badge">Patient</span>' : '') + '</div><div class="triage-queue-meta">' + fmtDate(item.createdAt) + ' · ' + esc(item.package || item.scenario || item.facility || '—') + ' · ' + esc(item.narrative || '').slice(0, 60) + '</div></div><span class="triage-queue-score" style="color:' + rm.color + '">' + item.score + '</span></button>' + (state.isStaff && state.batchBar ? '<label class="triage-queue-cb-wrap" title="Select for batch validation"><input type="checkbox" class="triage-queue-cb" data-code="' + esc(item.code) + '"' + (state.batchSelected[item.code] ? ' checked' : '') + '></label>' : '') + '</div>';
+    var labBadge = '';
+    if (item.labSeverity >= 2) labBadge = '<span class="triage-badge triage-lab-critical"><i class="fas fa-vial-circle-check me-1"></i>Critical lab</span>';
+    else if (item.labSeverity === 1) labBadge = '<span class="triage-badge triage-lab-abnormal"><i class="fas fa-vial me-1"></i>Abnormal lab</span>';
+    html += '<div class="triage-queue-row triage-queue-row-risk-' + item.risk + '"><button class="triage-queue-row-head" data-code="' + esc(item.code) + '"><span class="triage-queue-dot" style="background:' + rm.color + '"></span><div class="triage-queue-main"><div class="triage-queue-title"><span class="triage-code">' + esc(item.code) + '</span> <span class="triage-badge triage-badge-risk-' + item.risk + '">' + esc(rm.label) + '</span> <span class="triage-badge triage-badge-status">' + esc(sm.label) + '</span>' + labBadge + fuHtml + (item.patientName ? '<span class="triage-badge">Patient</span>' : '') + '</div><div class="triage-queue-meta">' + fmtDate(item.createdAt) + ' · ' + esc(item.package || item.scenario || item.facility || '—') + ' · ' + esc(item.narrative || '').slice(0, 60) + '</div></div><span class="triage-queue-score" style="color:' + rm.color + '">' + item.score + '</span></button>' + (state.isStaff && state.batchBar ? '<label class="triage-queue-cb-wrap" title="Select for batch validation"><input type="checkbox" class="triage-queue-cb" data-code="' + esc(item.code) + '"' + (state.batchSelected[item.code] ? ' checked' : '') + '></label>' : '') + '</div>';
   });
   list.innerHTML = html;
   list.querySelectorAll('.triage-queue-row-head').forEach(function(btn) { btn.addEventListener('click', function() { var code = btn.getAttribute('data-code'); var item = mergedQueue().find(function(i) { return i.code === code; }); if (item) expandQueueItem(item); }); });
@@ -763,6 +790,8 @@ function expandQueueItem(item) { expandedItem = item; var rm = RISK_META[item.ri
     var nm = STATUS_META[item.status].next; actions += '<button class="btn-primary btn-sm" onclick="updateStatus(\'' + item.id + '\',\'' + nm + '\')">' + esc(STATUS_META[item.status].action) + '</button>';
   } else if (item.status === 'completed') { actions += '<button class="btn-outline btn-sm" onclick="updateStatus(\'' + item.id + '\',\'scheduled\')">Reopen</button>'; }
   if (item.patient_id) { actions += '<button class="btn-primary btn-sm" style="background:var(--amber);color:#fff;" onclick="openReferral(\'' + item.id + '\')"><i class="fas fa-arrow-right-from-bracket me-1"></i>Prepare referral note</button>'; }
+  if (item.type === 'triage' && item.src === 'server') { actions += '<button class="btn-primary btn-sm" onclick="openSoap(\'' + item.id + '\')"><i class="fas fa-file-medical me-1"></i>SOAP</button>'; }
+  if (item.patient_id) { actions += '<button class="btn-primary btn-sm" style="background:var(--violet,#7c3aed);color:#fff;" onclick="openRx(\'' + item.id + '\')"><i class="fas fa-prescription me-1"></i>Rx</button>'; }
   actions += '<button class="btn-outline btn-sm" onclick="closeReferral()">Close</button></div>';
   $('#referral-body').insertAdjacentHTML('beforeend', actions);
 }
@@ -812,6 +841,144 @@ async function sendReferral(item) {
   try { var fd = new FormData(); fd.append('instruction_text', md); fd.append('patient_id', item.patient_id); var r = await fetch('/patient/instruction', { method: 'POST', body: fd, credentials: 'include' }); var j = await r.json(); addAudit('referral', 'Referral instruction sent to patient ' + item.patient_id + ' (' + (j.status === 'success' ? 'saved' : j.status) + ').'); closeReferral(); } catch (e) { addAudit('referral', 'Referral failed to send (network error).'); }
 }
 function closeReferral() { $('#referral-modal').style.display = 'none'; }
+
+/* ---------- SOAP Notes ---------- */
+var soapState = null; // { itemId, noteId, status }
+function openSoap(itemId) {
+  var item = mergedQueue().find(function(i) { return i.id === itemId; }); if (!item) return;
+  soapState = { itemId: itemId, noteId: null, status: 'draft' };
+  ['soap-s','soap-o','soap-a','soap-p'].forEach(function(id) { var el = $('#' + id); if (el) el.value = ''; });
+  var msg = $('#soap-msg'); if (msg) msg.textContent = '';
+  setSoapBadge('draft'); $('#soap-modal').style.display = '';
+  fetch('/api/triage/session/' + itemId + '/soap', { credentials: 'include' })
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(j) {
+      if (j && j.note) { fillSoap(j.note); soapState.noteId = j.note.id; soapState.status = j.note.status || 'draft'; setSoapBadge(soapState.status); }
+      else if (msg) msg.textContent = 'No note yet — click Generate to AI-draft one from this triage session.';
+    })
+    .catch(function() {});
+}
+function fillSoap(note) {
+  $('#soap-s').value = note.subjective || ''; $('#soap-o').value = note.objective || '';
+  $('#soap-a').value = note.assessment || ''; $('#soap-p').value = note.plan || '';
+  $('#soap-meta').textContent = 'Status: ' + (note.status === 'signed' ? 'Signed ' + (note.signed_at || '').replace('T', ' ').slice(0, 16) : 'Draft') + (note.updated_at ? ' · updated ' + note.updated_at.replace('T', ' ').slice(0, 16) : '');
+}
+function setSoapBadge(status) { var el = $('#soap-status-badge'); if (el) { el.textContent = status; el.style.background = status === 'signed' ? '#10b981' : '#eab308'; el.style.color = '#fff'; } }
+function closeSoap() { $('#soap-modal').style.display = 'none'; }
+async function soapGenerate() {
+  if (!soapState) return;
+  var btn = $('#soap-generate-btn'); var msg = $('#soap-msg');
+  btn.disabled = true; msg.textContent = 'AI drafting SOAP note… (may take up to ~20 s)';
+  try {
+    var r = await fetch('/api/triage/session/' + soapState.itemId + '/soap', { method: 'POST', credentials: 'include' });
+    var j = await r.json();
+    if (!r.ok || !j.note) throw new Error(j.detail || 'Generation failed');
+    soapState.noteId = j.note.id; soapState.status = j.note.status || 'draft';
+    fillSoap(j.note); setSoapBadge(soapState.status);
+    msg.textContent = 'Draft ready — review, edit, then Sign or Export PDF.';
+    addAudit('soap_generate', 'SOAP note drafted for session ' + soapState.itemId.slice(0, 8) + '.');
+  } catch (e) { msg.textContent = 'SOAP generation failed: ' + e.message; }
+  btn.disabled = false;
+}
+async function soapSave(sign) {
+  if (!soapState) return;
+  var msg = $('#soap-msg'); var url = soapState.noteId ? '/api/soap/' + soapState.noteId : '/api/triage/session/' + soapState.itemId + '/soap';
+  var btn = $(sign ? '#soap-sign-btn' : '#soap-save-btn'); if (btn) btn.disabled = true;
+  try {
+    var body = { subjective: $('#soap-s').value, objective: $('#soap-o').value, assessment: $('#soap-a').value, plan: $('#soap-p').value, sign: !!sign };
+    var r = await fetch(url, { method: soapState.noteId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(body) });
+    var j = await r.json();
+    if (!r.ok || (!j.note && !j.status)) throw new Error(j.detail || 'Save failed');
+    if (j.note) { soapState.noteId = j.note.id; soapState.status = j.note.status; fillSoap(j.note); setSoapBadge(j.note.status); }
+    msg.textContent = sign ? 'Note signed and locked.' : 'Draft saved.';
+    addAudit('soap_save', 'SOAP note ' + (sign ? 'signed' : 'saved') + ' for session ' + soapState.itemId.slice(0, 8) + '.');
+  } catch (e) { msg.textContent = 'Save failed: ' + e.message; }
+  if (btn) btn.disabled = false;
+}
+function soapPdf() {
+  if (!soapState || !soapState.noteId) { var msg = $('#soap-msg'); if (msg) msg.textContent = 'Generate and save the note first.'; return; }
+  window.open('/api/soap/' + soapState.noteId + '/pdf', '_blank');
+}
+
+/* ---------- Prescription ---------- */
+var rxState = null; // { itemId, patientId, rxId, status }
+function openRx(itemId) {
+  var item = mergedQueue().find(function(i) { return i.id === itemId; }); if (!item) return;
+  rxState = { itemId: itemId, patientId: item.patient_id, rxId: null, status: 'draft' };
+  $('#rx-intent').value = ''; $('#rx-advice').value = ''; $('#rx-items').innerHTML = ''; $('#rx-warnings').innerHTML = '';
+  var msg = $('#rx-msg'); if (msg) msg.textContent = '';
+  setRxBadge('draft'); $('#rx-modal').style.display = '';
+}
+function setRxBadge(status) { var el = $('#rx-status-badge'); if (el) { el.textContent = status; el.style.background = status === 'signed' ? '#10b981' : '#eab308'; el.style.color = '#fff'; } }
+function closeRx() { $('#rx-modal').style.display = 'none'; }
+function rxItemRow(item, idx) {
+  item = item || {};
+  return '<div class="triage-rx-row" data-idx="' + idx + '">' +
+    '<input class="triage-input" data-f="drug" placeholder="Drug" value="' + esc(item.drug || '') + '">' +
+    '<input class="triage-input" data-f="dose" placeholder="Dose" value="' + esc(item.dose || '') + '">' +
+    '<input class="triage-input" data-f="route" placeholder="Route" value="' + esc(item.route || '') + '">' +
+    '<input class="triage-input" data-f="frequency" placeholder="Frequency" value="' + esc(item.frequency || '') + '">' +
+    '<input class="triage-input" data-f="duration" placeholder="Duration" value="' + esc(item.duration || '') + '">' +
+    '<input class="triage-input" data-f="refills" placeholder="Refills" value="' + esc(item.refills || '0') + '">' +
+    '<input class="triage-input" data-f="instructions" placeholder="Instructions" value="' + esc(item.instructions || '') + '">' +
+    '<button class="btn-outline btn-sm" title="Remove" onclick="this.parentNode.remove()"><i class="fas fa-trash"></i></button></div>';
+}
+function renderRxItems(items) {
+  var wrap = $('#rx-items');
+  var html = '<div class="triage-rx-row triage-rx-head"><span>Drug</span><span>Dose</span><span>Route</span><span>Freq</span><span>Duration</span><span>Refills</span><span>Instructions</span><span></span></div>';
+  (items && items.length ? items : [{}]).forEach(function(it, i) { html += rxItemRow(it, i); });
+  wrap.innerHTML = html;
+}
+function collectRxItems() {
+  var items = [];
+  $('#rx-items').querySelectorAll('.triage-rx-row[data-idx]').forEach(function(row) {
+    var obj = {};
+    row.querySelectorAll('input[data-f]').forEach(function(inp) { obj[inp.getAttribute('data-f')] = inp.value; });
+    if ((obj.drug || '').trim()) items.push(obj);
+  });
+  return items;
+}
+async function rxGenerate() {
+  if (!rxState) return;
+  var intent = ($('#rx-intent').value || '').trim();
+  var msg = $('#rx-msg');
+  if (!intent) { msg.textContent = 'Type your prescribing intent first.'; return; }
+  if (!rxState.patientId) { msg.textContent = 'No patient attached to this session — cannot prescribe.'; return; }
+  var btn = $('#rx-generate-btn'); btn.disabled = true;
+  msg.textContent = 'AI formatting prescription… (may take up to ~20 s)';
+  try {
+    var r = await fetch('/api/prescription/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ patient_id: rxState.patientId, triage_session_id: rxState.itemId, intent: intent }) });
+    var j = await r.json();
+    if (!r.ok || !j.prescription) throw new Error(j.detail || 'Generation failed');
+    rxState.rxId = j.prescription.id; rxState.status = j.prescription.status || 'draft';
+    renderRxItems(j.prescription.items || []);
+    var warns = j.prescription.warnings || [];
+    $('#rx-warnings').innerHTML = warns.length ? '<div class="triage-referral-box triage-referral-amber"><div class="triage-referral-label">⚠ Warnings (check patient profile)</div><ul style="margin:4px 0 0 16px;">' + warns.map(function(w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul></div>' : '<div class="triage-hint">No interaction/allergy warnings flagged by AI.</div>';
+    $('#rx-advice').value = j.prescription.advice || '';
+    setRxBadge(rxState.status);
+    msg.textContent = 'Draft ready — edit inline, then Sign or Export PDF.';
+    addAudit('rx_generate', 'Prescription drafted for session ' + rxState.itemId.slice(0, 8) + '.');
+  } catch (e) { msg.textContent = 'Prescription generation failed: ' + e.message; }
+  btn.disabled = false;
+}
+async function rxSave(sign) {
+  if (!rxState || !rxState.rxId) { var m0 = $('#rx-msg'); if (m0) m0.textContent = 'Generate the prescription first.'; return; }
+  var msg = $('#rx-msg'); var btn = $(sign ? '#rx-sign-btn' : '#rx-save-btn'); if (btn) btn.disabled = true;
+  try {
+    var body = { items: collectRxItems(), advice: $('#rx-advice').value, sign: !!sign };
+    var r = await fetch('/api/prescription/' + rxState.rxId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(body) });
+    var j = await r.json();
+    if (!r.ok || !j.prescription) throw new Error(j.detail || 'Save failed');
+    rxState.status = j.prescription.status; setRxBadge(j.prescription.status);
+    msg.textContent = sign ? 'Prescription signed.' : 'Draft saved.';
+    addAudit('rx_save', 'Prescription ' + (sign ? 'signed' : 'saved') + ' (' + rxState.rxId.slice(0, 8) + ').');
+  } catch (e) { msg.textContent = 'Save failed: ' + e.message; }
+  if (btn) btn.disabled = false;
+}
+function rxPdf() {
+  if (!rxState || !rxState.rxId) { var msg = $('#rx-msg'); if (msg) msg.textContent = 'Generate and save the prescription first.'; return; }
+  window.open('/api/prescription/' + rxState.rxId + '/pdf', '_blank');
+}
 
 /* ---------- Analytics ---------- */
 function renderAnalytics() {

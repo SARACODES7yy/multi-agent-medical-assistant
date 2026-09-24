@@ -491,3 +491,16 @@
 .triumph-booking-guide { background:var(--accent-soft); border:1px solid var(--accent); border-radius:var(--r-sm); padding:12px 16px; margin-bottom:14px; font-size:13px; color:var(--ink); }
 .triumph-booking-guide strong { color:var(--accent); }
 @media (max-width:768px) { .triumph-booking-layout { flex-direction:column; } .triumph-booking-doctors { width:100%; } }
+
+/* ---------- SOAP / Prescription modals, lab badges, toasts ---------- */
+.triage-lab-critical { background:#dc2626; color:#fff; }
+.triage-lab-abnormal { background:#ea580c; color:#fff; }
+.triage-form-grid textarea { width:100%; }
+.triage-rx-row { display:grid; grid-template-columns: 1.4fr 0.9fr 0.7fr 1fr 0.9fr 0.5fr 1.2fr auto; gap:6px; margin-bottom:6px; align-items:center; }
+.triage-rx-row .triage-input { min-width:0; padding:6px 8px; font-size:12px; }
+.triage-rx-head { font-size:10.5px; color:var(--ink-dim); text-transform:uppercase; letter-spacing:.03em; margin-bottom:2px; }
+.triage-rx-head span { padding:0 2px; }
+.triage-toast { display:flex; align-items:center; gap:10px; background:var(--bg-raise, #fff); color:var(--ink, #1f2733); border:1px solid var(--line, #e4e9ee); border-left:4px solid #1F8A72; border-radius:10px; padding:10px 14px; box-shadow:0 8px 24px rgba(16,40,60,.14); font-size:13px; max-width:340px; animation:triageToastIn .25s ease; }
+.triage-toast-critical { border-left-color:#dc2626; background:#fff5f5; }
+.triage-toast-close { background:none; border:none; cursor:pointer; color:var(--ink-faint, #8294a6); margin-left:auto; padding:2px 4px; }
+@keyframes triageToastIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
