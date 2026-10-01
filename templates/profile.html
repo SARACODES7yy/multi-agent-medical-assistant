@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediAssist AI — Health Profile</title>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script>(function(){try{var s=localStorage.getItem('theme');var m=window.matchMedia('(prefers-color-scheme: light)').matches;var t=s||(m?'light':'dark');document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body class="dash-page">
+    <div class="dash-wrapper">
+        <nav class="dash-nav">
+            <span class="dash-brand"><i class="fas fa-notes-medical"></i> MediAssist</span>
+            <span class="dash-user">Health Profile</span>
+            <button class="theme-toggle theme-toggle-sm" onclick="toggleTheme()" title="Toggle theme"><i class="theme-icon fas fa-moon"></i></button>
+            <a href="/dashboard" class="btn-outline btn-sm"><i class="fas fa-home me-1"></i>Dashboard</a>
+            <a href="/" class="btn-outline btn-sm"><i class="fas fa-comments me-1"></i>Chat</a>
+            <button class="btn-outline btn-sm" onclick="logout()">Logout</button>
+        </nav>
+
+        <div class="dash-body">
+            <div class="dash-hero">
+                <h1 id="profile-title">Your Health Profile</h1>
+                <p class="patient-id-note">This information is used to personalise every AI chat reply.<br>The AI reads your medical, vitals and lifestyle fields &mdash; your name, date of birth and ID number stay private and are never sent to the AI.</p>
+            </div>
+
+            <div id="profile-flash" class="d-none" style="margin-bottom:16px;"></div>
+
+            <button type="button" class="btn-primary" id="save-top" onclick="saveProfile()" style="margin-bottom:16px;"><i class="fas fa-save me-2"></i>Save Changes</button>
+
+            <div class="dash-card">
+                <h3><i class="fas fa-user me-2"></i>Basics & Identity</h3>
+                <div class="row">
+                    <div class="col">
+                        <div class="form-group"><label>Full Name</label><input id="f-name" value="{{ profile.get('name') or '' }}"></div>
+                        <div class="form-group"><label>Date of Birth</label><input id="f-dob" type="date" value="{{ profile.get('dob') or '' }}"></div>
+                        <div class="form-group"><label>Gender</label>
+                            <select id="f-gender">
+                                <option value="" {% if not profile.get('gender') %}selected{% endif %}>Not specified</option>
+                                <option value="Male" {% if profile.get('gender')=='Male' %}selected{% endif %}>Male</option>
+                                <option value="Female" {% if profile.get('gender')=='Female' %}selected{% endif %}>Female</option>
+                                <option value="Other" {% if profile.get('gender')=='Other' %}selected{% endif %}>Other</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="col">
+                        <div class="form-group"><label>ID Type</label>
+                            <select id="f-id-type"><option value="Aadhaar">Aadhaar</option><option value="Passport">Passport</option><option value="Driving License">Driving License</option><option value="Other">Other</option></select>
+                        </div>
+                        <div class="form-group"><label>ID Number</label><input id="f-id-number" value="{{ profile.get('id_number') or '' }}"></div>
+                        <div class="form-group"><label>Blood Group</label>
+                            <select id="f-blood-group">
+                                <option value="" {% if not profile.get('blood_group') %}selected{% endif %}>Not specified</option>
+                                <option value="A+" {% if profile.get('blood_group')=='A+' %}selected{% endif %}>A+</option>
+                                <option value="A-" {% if profile.get('blood_group')=='A-' %}selected{% endif %}>A-</option>
+                                <option value="B+" {% if profile.get('blood_group')=='B+' %}selected{% endif %}>B+</option>
+                                <option value="B-" {% if profile.get('blood_group')=='B-' %}selected{% endif %}>B-</option>
+                                <option value="AB+" {% if profile.get('blood_group')=='AB+' %}selected{% endif %}>AB+</option>
+                                <option value="AB-" {% if profile.get('blood_group')=='AB-' %}selected{% endif %}>AB-</option>
+                                <option value="O+" {% if profile.get('blood_group')=='O+' %}selected{% endif %}>O+</option>
+                                <option value="O-" {% if profile.get('blood_group')=='O-' %}selected{% endif %}>O-</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dash-card">
+                <h3><i class="fas fa-heartbeat me-2"></i>Vitals</h3>
+                <div class="row">
+                    <div class="col">
+                        <div class="form-group"><label>Height</label><input id="f-height" placeholder="e.g. 172 cm"></div>
+                        <div class="form-group"><label>Blood Pressure</label><input id="f-blood-pressure" placeholder="e.g. 120/80"></div>
+                    </div>
+                    <div class="col">
+                        <div class="form-group"><label>Weight</label><input id="f-weight" placeholder="e.g. 68 kg"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dash-card">
+                <h3><i class="fas fa-notes-medical me-2"></i>Medical</h3>
+                <div class="row">
+                    <div class="col">
+                        <div class="form-group"><label>Medical History</label><textarea id="f-medical-history" rows="3" placeholder="Past illnesses, admissions..."></textarea></div>
+                        <div class="form-group"><label>Current Medications</label><textarea id="f-medications" rows="2" placeholder="Doses if known"></textarea></div>
+                        <div class="form-group"><label>Vaccination Status</label><textarea id="f-vaccination" rows="2" placeholder="e.g. COVID-19, flu, tetanus boosted"></textarea></div>
+                    </div>
+                    <div class="col">
+                        <div class="form-group"><label>Allergies</label><input id="f-allergies" placeholder="Known allergens"></div>
+                        <div class="form-group"><label>Current Conditions</label><textarea id="f-conditions" rows="2"></textarea></div>
+                        <div class="form-group"><label>Current Treatments</label><textarea id="f-treatments" rows="2"></textarea></div>
+                        <div class="form-group"><label>Surgeries</label><textarea id="f-surgeries" rows="2" placeholder="Past operations"></textarea></div>
+                        <div class="form-group"><label>Family History</label><textarea id="f-family-history" rows="2" placeholder="Conditions in close relatives"></textarea></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dash-card">
+                <h3><i class="fas fa-running me-2"></i>Lifestyle</h3>
+                <div class="row">
+                    <div class="col">
+                        <div class="form-group"><label>Smoking</label>
+                            <select id="f-smoking"><option value="" selected>Not specified</option><option value="Never">Never</option><option value="Former">Former</option><option value="Occasional">Occasional</option><option value="Regular">Regular</option></select>
+                        </div>
+                        <div class="form-group"><label>Alcohol</label>
+                            <select id="f-alcohol"><option value="" selected>Not specified</option><option value="Never">Never</option><option value="Occasional">Occasional</option><option value="Regular">Regular</option></select>
+                        </div>
+                    </div>
+                    <div class="col">
+                        <div class="form-group"><label>Exercise</label><input id="f-exercise" placeholder="e.g. 3x/week, 30 min walks"></div>
+                        <div class="form-group"><label>Diet</label><input id="f-diet" placeholder="e.g. vegetarian, low-salt"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dash-card">
+                <h3><i class="fas fa-phone me-2"></i>Emergency Contact</h3>
+                <div class="row">
+                    <div class="col"><div class="form-group"><label>Name</label><input id="f-emergency-name" placeholder="Contact person"></div></div>
+                    <div class="col"><div class="form-group"><label>Phone</label><input id="f-emergency-phone" placeholder="Contact number"></div></div>
+                </div>
+            </div>
+
+            <div class="dash-card-actions" style="margin-bottom:24px;">
+                <button class="btn-primary" onclick="saveProfile()"><i class="fas fa-save me-2"></i>Save Changes</button>
+                <a href="/dashboard" class="btn-outline" style="margin-left:10px;">Back to Dashboard</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function toggleTheme(){var cur=document.documentElement.getAttribute('data-theme');var nxt=cur==='light'?'dark':'light';document.documentElement.setAttribute('data-theme',nxt);try{localStorage.setItem('theme',nxt);}catch(e){}updateThemeIcon(nxt);}
+        function updateThemeIcon(t){document.querySelectorAll('.theme-icon').forEach(function(el){el.className=t==='light'?'theme-icon fas fa-moon':'theme-icon fas fa-sun';});}
+        updateThemeIcon(document.documentElement.getAttribute('data-theme')||'dark');
+        function logout(){fetch('/logout',{credentials:'include'}).then(function(){window.location.href='/login';});}
+
+        const initial = {{ profile | tojson }};
+        function v(id){ return document.getElementById(id).value; }
+        function setv(id, val){ var el=document.getElementById(id); if(el && val) el.value=val; }
+
+        const idMap = {
+            'f-name':'name','f-dob':'dob','f-gender':'gender','f-id-type':'id_type','f-id-number':'id_number',
+            'f-blood-group':'blood_group','f-height':'height','f-weight':'weight','f-blood-pressure':'blood_pressure',
+            'f-medical-history':'medical_history','f-medications':'medications','f-vaccination':'vaccination',
+            'f-allergies':'allergies','f-conditions':'conditions','f-treatments':'treatments','f-surgeries':'surgeries',
+            'f-family-history':'family_history','f-smoking':'smoking','f-alcohol':'alcohol','f-exercise':'exercise',
+            'f-diet':'diet','f-emergency-name':'emergency_name','f-emergency-phone':'emergency_phone'
+        };
+        for (var id in idMap) {
+            var key = idMap[id];
+            var el = document.getElementById(id);
+            if (el && initial && initial[key] != null && initial[key].toString().trim() !== '') {
+                if (el.tagName === 'SELECT') {
+                    for (var i=0;i<el.options.length;i++){ if(el.options[i].value===initial[key]){ el.selectedIndex=i; break; } }
+                } else {
+                    el.value = initial[key];
+                }
+            }
+        }
+
+        function flash(msg, ok) {
+            var f = document.getElementById('profile-flash');
+            f.classList.remove('d-none');
+            f.style.background = ok ? 'var(--trace-bg)' : 'var(--danger-bg)';
+            f.style.border = '1px solid ' + (ok ? 'var(--trace)' : 'var(--danger)');
+            f.style.color = ok ? 'var(--trace-ink)' : 'var(--danger)';
+            f.style.padding = '10px 14px';
+            f.style.borderRadius = 'var(--r-xs)';
+            f.style.fontSize = '13px';
+            f.textContent = msg;
+            setTimeout(function(){ f.classList.add('d-none'); }, 4000);
+        }
+
+        async function saveProfile() {
+            var body = {};
+            for (var id in idMap) body[idMap[id]] = v(id);
+            var btn = document.getElementById('save-top');
+            var orig = btn.innerHTML;
+            btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Saving...';
+            try {
+                var r = await fetch('/api/profile', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body), credentials:'include' });
+                var d = await r.json();
+                if (r.ok) flash('Profile saved. Your AI chats will now use this information.', true);
+                else flash(d.detail || 'Save failed', false);
+            } catch(ex) { flash('Network error', false); }
+            btn.disabled = false; btn.innerHTML = orig;
+        }
+    </script>
+</body>
+</html>

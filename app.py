@@ -1,0 +1,1921 @@
+import os
+import sys
+import uuid
+import json
+import asyncio
+import tempfile
+import logging
+from datetime import datetime, timezone
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+from typing import Dict, Union, Optional, List
+import glob
+import threading
+import time
+import hashlib
+
+# ---- Server-side AI-response cache (quota-friendly: reuse near-identical submissions) ----
+# ---- short-answer AI dedupe cache (quota-friendly; keyed by exact narrative) ----
+_ai_response_cache: Dict[str, tuple] = {}
+_AI_CACHE: Dict[str, tuple] = {}
+_ai_response_cache: Dict[str, tuple] = {}
+_AI_CACHE_TTL = 300
+
+def _ai_cache_lookup(key):
+    v = _AI_CACHE.get(key)
+    if v and time.time() - v[0] < _AI_CACHE_TTL:
+        return v
+    return None
+
+def _ai_cache_store(key, data):
+    _AI_CACHE[key] = (time.time(), data)
+    if len(_AI_CACHE) > 128:
+        for _k in list(_AI_CACHE.keys()):
+            if time.time() - _AI_CACHE[_k][0] > _AI_CACHE_TTL:
+                del _AI_CACHE[_k]
+from io import BytesIO
+
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Request, Response, Cookie
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+from starlette.concurrency import run_in_threadpool
+from contextlib import asynccontextmanager
+from langchain_core.messages import HumanMessage
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
+
+import uvicorn
+import requests
+from werkzeug.utils import secure_filename
+try:
+    from pydub import AudioSegment
+    PYDUB_AVAILABLE = True
+except ImportError:
+    PYDUB_AVAILABLE = False
+from elevenlabs.client import ElevenLabs
+
+from config import Config
+from agents.agent_decision import process_query, get_graph
+from agents.image_analysis_agent import ImageAnalysisAgent as _ImageAnalysisAgent
+from agents.soap_agent import SOAPGenerator
+from agents.prescription_agent import PrescriptionAgent
+from auth import AuthManager, create_session_cookie, verify_session_cookie
+from models.db import get_db, Database
+from models.patient_rag import PatientRAG
+from utils.pdf_extract import extract_pdf_text
+from utils.pdf_export import build_soap_pdf, build_prescription_pdf, build_invoice_pdf
+from utils.notify import build_daily_digest, dispatch_digest, create_notification
+import utils.interactions as rx_intx
+
+# Module-level image agent (lazy): avoids re-loading OCR/LLM models per request.
+_image_agent: _ImageAnalysisAgent | None = None
+
+def _get_image_agent() -> _ImageAnalysisAgent:
+    global _image_agent
+    if _image_agent is None:
+        _image_agent = _ImageAnalysisAgent(config=config)
+    return _image_agent
+
+# Lazy clinical documentation agents (share the conversation LLM; light to build).
+_soap_generator: SOAPGenerator | None = None
+_rx_agent: PrescriptionAgent | None = None
+
+def _get_soap_generator() -> SOAPGenerator:
+    global _soap_generator
+    if _soap_generator is None:
+        _soap_generator = SOAPGenerator(config)
+    return _soap_generator
+
+def _get_rx_agent() -> PrescriptionAgent:
+    global _rx_agent
+    if _rx_agent is None:
+        _rx_agent = PrescriptionAgent(config)
+    return _rx_agent
+
+# Load configuration
+logger = logging.getLogger(__name__)
+config = Config()
+
+# Auth + per-patient RAG
+auth_manager = AuthManager()
+patient_rag = PatientRAG()
+db = get_db()
+# NOTE: RapidOCR/docling are intentionally NOT pre-warmed here. Their
+# onnxruntime inference runs in an isolated child process per upload
+# (see utils/isolated_worker.py) so a crash/OOM can never kill this server,
+# and skipping the preload keeps boot memory low on small instances.
+
+# Initialize FastAPI app
+app = FastAPI(title="Multi-Agent Medical Chatbot", version="2.0")
+
+# Background daily-digest scheduler (dispatches one digest notification per
+# doctor/nurse for today's due follow-ups, critical labs, unpaid invoices).
+_DIGEST_INTERVAL_SEC = int(os.getenv("DIGEST_INTERVAL_SEC", "28800"))
+_digest_task = None
+
+@asynccontextmanager
+async def lifespan(fastapp: FastAPI):
+    global _digest_task
+    if os.getenv("DISABLE_SCHEDULER", "").lower() == "true":
+        yield
+        return
+    async def _digest_loop():
+        while True:
+            try:
+                digest, sent = dispatch_digest(db)
+                if sent:
+                    logger.info("daily digest dispatched to %s doctors (%s)", sent, digest.get("date"))
+            except Exception as e:
+                logger.warning("digest dispatch failed: %s", e)
+            await asyncio.sleep(_DIGEST_INTERVAL_SEC)
+    _digest_task = asyncio.create_task(_digest_loop())
+    try:
+        yield
+    finally:
+        if _digest_task:
+            _digest_task.cancel()
+            _digest_task = None
+
+app = FastAPI(title="Multi-Agent Medical Chatbot", version="2.1", lifespan=lifespan)
+
+# Set up directories
+UPLOAD_FOLDER = "uploads/backend"
+FRONTEND_UPLOAD_FOLDER = "uploads/frontend"
+SKIN_LESION_OUTPUT = "uploads/skin_lesion_output"
+SPEECH_DIR = "uploads/speech"
+
+# Create directories if they don't exist
+for directory in [UPLOAD_FOLDER, FRONTEND_UPLOAD_FOLDER, SKIN_LESION_OUTPUT, SPEECH_DIR]:
+    os.makedirs(directory, exist_ok=True)
+
+# Mount static files directory
+app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/data", StaticFiles(directory="data"), name="data")
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
+# Set up templates
+templates = Jinja2Templates(directory="templates")
+
+# Initialize ElevenLabs client
+client = ElevenLabs(
+    api_key=config.speech.eleven_labs_api_key,
+)
+
+# Define allowed file extensions
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'pdf'}
+ALLOWED_IMAGE_EXTENSIONS = {'png', 'jpg', 'jpeg'}
+ALLOWED_DOC_EXTENSIONS = {'pdf'}
+
+def allowed_file(filename):
+    """Check if file has an allowed extension"""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def is_pdf(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() == 'pdf'
+
+def is_image(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_IMAGE_EXTENSIONS
+
+def downscale_image_file(path, max_dim=1600):
+    """Shrink very large photos to bound OCR/LLM time and RAM (free-tier 502 guard). Never raises."""
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            if max(im.size) > max_dim:
+                im.thumbnail((max_dim, max_dim), Image.LANCZOS)
+                im.save(path)
+    except Exception as e:
+        logger.warning(f"Image downscale skipped: {e}")
+
+
+async def describe_scanned_pdf(file_path, extra_context=""):
+    """Read a scanned (image-only) PDF via rasterize + local OCR or vision fallback.
+
+    Returns ``(text, page_count)``. Always returns a safe result without raising.
+    """
+    from utils.pdf_extract import rasterize_pdf_pages
+    from agents.agent_decision import AgentConfig
+    try:
+        pages = await run_in_threadpool(rasterize_pdf_pages, file_path)
+    except Exception as re:
+        logger.warning(f"PDF rasterize failed: {re}")
+        pages = []
+
+    if not pages:
+        return "Medical report PDF document attached for reviewer triage.", 1
+
+    classifier = AgentConfig.image_analyzer.image_classifier
+    text = ""
+
+    # Primary: run local OCR on rasterized pages (fast, free, no quota limits)
+    page_texts = []
+    import tempfile
+    for i, page_bytes in enumerate(pages[:5]):
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                tmp.write(page_bytes)
+                tmp_path = tmp.name
+            p_text = await run_in_threadpool(classifier._ocr_image, tmp_path)
+            if p_text and p_text.strip():
+                page_texts.append(f"--- Page {i+1} ---\n" + p_text.strip())
+        except Exception as ocr_err:
+            logger.warning(f"Local OCR failed for page {i+1}: {ocr_err}")
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try: os.remove(tmp_path)
+                except Exception: pass
+    if page_texts:
+        text = "\n\n".join(page_texts)
+
+    # Secondary: if OCR returned empty, try vision model
+    if not text or not text.strip():
+        has_vision = bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"))
+        if has_vision:
+            try:
+                text = await run_in_threadpool(classifier.describe_page_images, pages, extra_context)
+            except Exception as ve:
+                logger.warning(f"Vision page extraction failed: {ve}")
+
+    if not text or not text.strip():
+        text = "Medical report PDF document attached for reviewer triage. Visual content preserved."
+    return text.strip(), max(len(pages), 1)
+
+def cleanup_old_audio():
+    """Deletes all .mp3 files in the uploads/speech folder every 5 minutes."""
+    while True:
+        try:
+            files = glob.glob(f"{SPEECH_DIR}/*.mp3")
+            for file in files:
+                os.remove(file)
+            print("Cleaned up old speech files.")
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
+        time.sleep(300)  # Runs every 5 minutes
+
+# Start background cleanup thread
+cleanup_thread = threading.Thread(target=cleanup_old_audio, daemon=True)
+cleanup_thread.start()
+
+class QueryRequest(BaseModel):
+    query: str
+    conversation_history: List = []
+
+class SpeechRequest(BaseModel):
+    text: str
+    voice_id: str = "EXAMPLE_VOICE_ID"  # Default voice ID
+
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    """Serve the main HTML page"""
+    return templates.TemplateResponse(request, "index.html", {"request": request})
+
+@app.get("/health")
+def health_check():
+    """Health check endpoint for Docker health checks"""
+    return {"status": "healthy"}
+
+@app.post("/chat")
+async def chat(
+    request: Request,
+    response: Response,
+    session_id: Optional[str] = Cookie(None)
+):
+    """Process text query or medical image/PDF upload (AI-based) via /chat."""
+    payload = verify_session_cookie(session_id)
+    user_id = payload["user_id"] if payload else None
+    content_type = request.headers.get("content-type", "") or ""
+    has_file = False
+    file_path = None
+    query_text = ""
+    filename_str = ""
+    is_img_file = False
+    is_pdf_file = False
+
+    # --- Parse input: multipart (image) vs JSON (text) ---
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        _q = form.get("query")
+        query_text = str(_q).strip() if (_q is not None and not isinstance(_q, UploadFile)) else ""
+        uploaded = form.get("file") or form.get("image")
+        if uploaded is not None:
+            try:
+                filename_str = getattr(uploaded, "filename", "") or "upload"
+            except Exception:
+                filename_str = "upload"
+            # Detect type and validate extension
+            is_img_file = is_image(filename_str)
+            is_pdf_file = is_pdf(filename_str)
+            if not is_img_file and not is_pdf_file:
+                if '.' in filename_str and filename_str.rsplit('.', 1)[1].lower() not in ALLOWED_EXTENSIONS:
+                    return JSONResponse(
+                        status_code=400,
+                        content={
+                            "status": "error",
+                            "agent": "System",
+                            "response": f"Unsupported file type '{filename_str}'. Allowed formats: PNG, JPG, JPEG, PDF"
+                        }
+                    )
+                is_img_file = True
+            has_file = True
+            try:
+                save_name = secure_filename(f"{uuid.uuid4()}_{filename_str or 'upload.png'}")
+                file_path = os.path.join(UPLOAD_FOLDER, save_name)
+                content = await uploaded.read()
+                # uploaded.read() may return "" if already consumed; guard
+                if content:
+                    with open(file_path, "wb") as f:
+                        f.write(content)
+                else:
+                    file_path = None
+                    has_file = False
+            except Exception as e:
+                logger.warning(f"Failed to save uploaded file for /chat: {e}")
+                file_path = None
+                has_file = False
+    else:
+        try:
+            body = await request.json()
+            query_text = (body.get("query") or body.get("text") or "").strip() if isinstance(body, dict) else ""
+        except Exception:
+            query_text = ""
+
+    # --- Non-file (pure text) path: preserve original behavior ---
+    if not has_file or not file_path:
+        # No file -> standard text chat (existing logic)
+        augmented = augment_query(query_text, session_id)
+        history = []
+        if user_id:
+            history = db.get_chat_history(user_id, limit=config.max_conversation_history)
+            if query_text:
+                db.add_message(user_id, "user", query_text)
+        if not session_id:
+            session_id = str(uuid.uuid4())
+        _dedupe_key = hashlib.sha256((augmented + "|" + (user_id or "")).encode("utf-8")).hexdigest()
+        _dedupe = _ai_response_cache.get(_dedupe_key)
+        if _dedupe and (time.time() - _dedupe[0]) < 300:
+            # De-duplicate: same narrative re-submitted within 5 min -> return cached AI note (saves a Groq call)
+            if user_id:
+                db.add_message(user_id, "user", query_text)
+            response.set_cookie(key="session_id", value=_dedupe[3])
+            return {"status": "success", "response": _dedupe[1], "agent": _dedupe[2], "session_id": _dedupe[3],
+                    "summary": _dedupe[4].get("summary", ""), "chief_complaints": _dedupe[4].get("chief_complaints", [])}
+        try:
+            response_data = process_query(augmented, conversation_history=history, user_id=user_id)
+            if response_data.get("status") == "validation_required":
+                if user_id:
+                    db.add_message(user_id, "assistant", response_data["message"], agent="HUMAN_VALIDATION")
+                response.set_cookie(key="session_id", value=session_id)
+                return {"status": "validation_required", "message": response_data["message"], "thread_id": response_data["thread_id"]}
+            # Normal success - handle both message list and validation shapes
+            msgs = response_data.get("messages")
+            if msgs and isinstance(msgs, list) and len(msgs) > 0:
+                last = msgs[-1]
+                response_text = last.content if hasattr(last, "content") else (last.get("content", "") if isinstance(last, dict) else str(last))
+                if isinstance(response_text, list):
+                    response_text = " ".join(str(c) for c in response_text)
+            else:
+                response_text = str(response_data.get("output", "") or response_data.get("response", ""))
+            agent_name = response_data.get("agent_name", "")
+            if user_id:
+                db.add_message(user_id, "assistant", response_text, agent=agent_name)
+                try:
+                    patient_rag.add_patient_data(user_id, f"Q: {query_text}\nA: {response_text}", source=f"chat/{agent_name}")
+                except Exception as se:
+                    logger.warning(f"Failed to index chat to RAG: {se}")
+            response.set_cookie(key="session_id", value=session_id)
+            # Store into dedupe cache so an identical re-submission within TTL returns without another Groq call
+            _ai_response_cache[_dedupe_key] = (time.time(), response_text, agent_name, session_id,
+                                               {"summary": response_text, "chief_complaints": []})
+            return {"status": "success", "response": response_text, "agent": agent_name}
+        except Exception as e:
+            s = str(e)
+            if 'GenerateRequestsPerDay' in s or 'rate' in s.lower() or 'quota' in s.lower():
+                import re
+                m = re.search(r'retry_delay[{\s]+seconds[{\s]+(\d+(?:\.\d+)?)', s)
+                delay = float(m.group(1)) if m else 60
+                raise HTTPException(status_code=429, detail=f"API rate limit reached. Please retry in {int(delay)} seconds.")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # --- File path: AI-based image/PDF analysis via existing agents ---
+    if not session_id:
+        session_id = str(uuid.uuid4())
+    history = db.get_chat_history(user_id, limit=config.max_conversation_history) if user_id else []
+    # Build augmented text like /upload does (include patient context)
+    if is_pdf_file:
+        # PDF branch: extract text and synthesize via conversation agent.
+        # Both extraction and the LLM call are blocking: run them in a worker
+        # thread so this single-worker server keeps answering /health (502 guard).
+        try:
+            pdf_text, page_count = await run_in_threadpool(extract_pdf_text, file_path, config.api.max_pdf_pages)
+        except Exception as pdf_ex:
+            logger.warning(f"extract_pdf_text exception: {pdf_ex}, trying describe_scanned_pdf fallback")
+            try:
+                pdf_text, page_count = await describe_scanned_pdf(file_path, query_text)
+            except Exception as scan_ex:
+                logger.warning(f"Scanned PDF fallback exception: {scan_ex}")
+                pdf_text = "Medical report PDF document attached for reviewer triage."
+                page_count = 1
+        max_chars = 32000
+        truncated = pdf_text[:max_chars]
+        if len(pdf_text) > max_chars:
+            truncated += f"\n\n[... truncated — {len(pdf_text) - max_chars} characters omitted ...]"
+        query_text_pdf = f"[PDF CONTENT - {page_count} page(s)]\n{truncated}\n\n[USER QUESTION]\n{query_text or 'Summarize this document'}"
+        augmented_text = augment_query(query_text_pdf, session_id)
+        try:
+            response_data = await run_in_threadpool(process_query, augmented_text, history, user_id)
+        except Exception as pdf_err:
+            logger.warning(f"LLM synthesis on PDF failed: {pdf_err}, returning extracted text fallback")
+            response_data = {
+                "status": "success",
+                "output": f"Extracted Document Content ({page_count} page(s)):\n\n{pdf_text}",
+                "agent_name": "PDF_OCR_Extractor"
+            }
+        finally:
+            try: os.remove(file_path)
+            except Exception: pass
+        if response_data.get("status") == "validation_required":
+            response.set_cookie(key="session_id", value=session_id)
+            return {"status": "validation_required", "message": response_data["message"], "thread_id": response_data["thread_id"]}
+        msgs = response_data.get("messages")
+        if msgs and isinstance(msgs, list) and len(msgs) > 0:
+            last = msgs[-1]
+            response_text = last.content if hasattr(last, "content") else (last.get("content", "") if isinstance(last, dict) else str(last))
+            if isinstance(response_text, list):
+                response_text = " ".join(str(c) for c in response_text)
+        else:
+            response_text = str(response_data.get("output", "") or "")
+        agent_name = response_data.get("agent_name", "")
+        response.set_cookie(key="session_id", value=session_id)
+        if user_id:
+            db.add_message(user_id, "user", query_text or f"Uploaded PDF: {filename_str} ({page_count} pages)")
+            db.add_message(user_id, "assistant", response_text, agent=agent_name)
+            try:
+                patient_rag.add_patient_data(user_id, f"[Uploaded PDF: {filename_str}]\n{pdf_text[:4000]}", source=f"pdf/{filename_str}")
+            except Exception as se:
+                logger.warning(f"Failed to index PDF to patient RAG: {se}")
+        return {"status": "success", "response": response_text, "agent": agent_name}
+    else:
+        # Image branch: direct OCR + text-LLM (bypasses slow agent graph, same as /upload fix)
+        downscale_image_file(file_path)
+        extra_ctx = query_text or ""
+        try:
+            agent = _get_image_agent()
+            response_text = await run_in_threadpool(
+                agent.analyze_medical_image, file_path, extra_ctx
+            )
+        except Exception as img_ex:
+            logger.warning(f"/chat image analysis failed: {img_ex}, using OCR fallback")
+            try:
+                ocr_text = _get_image_agent().image_classifier._ocr_image(file_path)
+                response_text = f"Extracted Image Text:\n\n{ocr_text}" if ocr_text else "Medical report image attached for reviewer triage."
+            except Exception:
+                response_text = "Medical report image received. Please share the details with your healthcare provider."
+        agent_name = "MEDICAL_IMAGE_AGENT"
+        response.set_cookie(key="session_id", value=session_id)
+        if user_id:
+            db.add_message(user_id, "user", query_text or "Uploaded a medical image")
+            db.add_message(user_id, "assistant", response_text, agent=agent_name)
+            _persist_lab_flags(user_id, response_text, filename=filename_str)
+        result = {"status": "success", "response": response_text, "agent": agent_name}
+
+        # Attach the structured JSON block (if the agent returned one) so the
+        # frontend can render OCR findings graphically without re-parsing text.
+        try:
+            _json_block = None
+            import json as _json
+            _t = response_text
+            _b = _t.find("{")
+            if _b >= 0:
+                _depth = 0; _end = -1; _in_str = False; _esc = False
+                for _i in range(_b, len(_t)):
+                    _ch = _t[_i]
+                    if _in_str:
+                        if _esc: _esc = False
+                        elif _ch == "\\": _esc = True
+                        elif _ch == '"': _in_str = False
+                    else:
+                        if _ch == '"': _in_str = True
+                        elif _ch == "{": _depth += 1
+                        elif _ch == "}":
+                            _depth -= 1
+                            if _depth == 0: _end = _i; break
+                if _end > _b:
+                    _json_block = _json.loads(_t[_b:_end + 1])
+            result["response_json"] = _json_block
+        except Exception as _pe:
+            print(f"[chat] no structured JSON in image response: {_pe}")
+        finally:
+            try: os.remove(file_path)
+            except Exception: pass
+        return result
+
+
+@app.post("/upload")
+async def upload_file(
+    response: Response,
+    image: UploadFile = File(None),
+    file: UploadFile = File(None),
+    text: str = Form(""),
+    session_id: Optional[str] = Cookie(None)
+):
+    """Process medical image or PDF uploads with optional text input."""
+    # Accept either 'image' or 'file' form field (frontend uses 'file')
+    uploaded = file or image
+    if not uploaded or not uploaded.filename:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error",
+                "agent": "System",
+                "response": "No file provided"
+            }
+        )
+
+    filename = uploaded.filename
+    is_pdf_file = is_pdf(filename)
+    is_img_file = is_image(filename)
+
+    # Validate file type
+    if not is_pdf_file and not is_img_file:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error",
+                "agent": "System",
+                "response": "Unsupported file type. Allowed formats: PNG, JPG, JPEG, PDF"
+            }
+        )
+
+    # Check file size before saving
+    file_content = await uploaded.read()
+    max_size = config.api.max_pdf_upload_size if is_pdf_file else config.api.max_image_upload_size
+    if len(file_content) > max_size * 1024 * 1024:  # Convert MB to bytes
+        return JSONResponse(
+            status_code=413,
+            content={
+                "status": "error",
+                "agent": "System",
+                "response": f"File too large. Maximum size allowed: {max_size}MB"
+            }
+        )
+
+    # Generate session ID for cookie if it doesn't exist
+    if not session_id:
+        session_id = str(uuid.uuid4())
+
+    # Save file securely
+    save_name = secure_filename(f"{uuid.uuid4()}_{filename}")
+    file_path = os.path.join(UPLOAD_FOLDER, save_name)
+    with open(file_path, "wb") as f:
+        f.write(file_content)
+
+    # Bound OCR/LLM time and RAM: downscale very large photos before analysis.
+    # (Full-res phone photos spike memory on small Render instances -> 502.)
+    if is_img_file:
+        downscale_image_file(file_path)
+
+    try:
+        payload = verify_session_cookie(session_id)
+        user_id = payload["user_id"] if payload else None
+
+        history = db.get_chat_history(user_id, limit=config.max_conversation_history) if user_id else []
+        augmented_text = augment_query(text or ("Analyze this medical image" if is_img_file else "Summarize this medical document"), session_id)
+
+        if is_pdf_file:
+            # --- PDF path: extract text, answer inline, index into RAG ---
+            # Extraction + LLM call are blocking: threadpool keeps /health alive (502 guard).
+            try:
+                pdf_text, page_count = await run_in_threadpool(extract_pdf_text, file_path, config.api.max_pdf_pages)
+            except Exception as pdf_ex:
+                logger.warning(f"/upload extract_pdf_text exception: {pdf_ex}, trying describe_scanned_pdf")
+                try:
+                    pdf_text, page_count = await describe_scanned_pdf(file_path, text)
+                except Exception as scan_ex:
+                    logger.warning(f"/upload scanned PDF fallback exception: {scan_ex}")
+                    pdf_text = "Medical report PDF document attached for reviewer triage."
+                    page_count = 1
+
+            # Truncate to fit LLM context (rough: ~4 chars per token, 8192 tokens ≈ 32k chars)
+            max_chars = 32000
+            truncated = pdf_text[:max_chars]
+            if len(pdf_text) > max_chars:
+                truncated += f"\n\n[... truncated — {len(pdf_text) - max_chars} characters omitted ...]"
+
+            query_text = f"[PDF CONTENT - {page_count} page(s)]\n{truncated}\n\n[USER QUESTION]\n{text or 'Summarize this document'}"
+            augmented_text = augment_query(query_text, session_id)
+
+            query = augmented_text
+            response_data = await run_in_threadpool(process_query, query, history, user_id)
+            if response_data.get("status") == "validation_required":
+                response.set_cookie(key="session_id", value=session_id)
+                return {"status": "validation_required", "message": response_data["message"], "thread_id": response_data["thread_id"]}
+            response_text = response_data.get('messages', [response_data.get('output', '')])[-1].content if isinstance(response_data.get('messages'), list) else str(response_data.get('output', ''))
+            agent_name = response_data.get("agent_name", "")
+
+            # Set session cookie
+            response.set_cookie(key="session_id", value=session_id)
+
+            # Persist the exchange
+            if user_id:
+                user_msg = text or f"Uploaded PDF: {filename} ({page_count} pages)"
+                db.add_message(user_id, "user", user_msg)
+                db.add_message(user_id, "assistant", response_text, agent=agent_name)
+
+                # Index the PDF content into patient RAG for future retrieval
+                try:
+                    patient_rag.add_patient_data(
+                        user_id,
+                        f"[Uploaded PDF: {filename}]\n{pdf_text[:4000]}",
+                        source=f"pdf/{filename}",
+                    )
+                except Exception as se:
+                    logger.warning(f"Failed to index PDF to patient RAG: {se}")
+
+            result = {
+                "status": "success",
+                "response": response_text,
+                "agent": agent_name
+            }
+        else:
+            # --- Image path: direct OCR + text-LLM (bypasses slow agent graph) ---
+            # Calling process_query with an image dict goes through 4-6 serial LLM
+            # hops (routing → classify → extract → insight → format) which easily
+            # exceeds Render's ~30 s proxy timeout → 502. Instead we call the
+            # ImageClassifier directly: RapidOCR (local) + one Groq text call ≈ 5-15 s.
+            extra_ctx = text or ""
+            try:
+                agent = _get_image_agent()
+                response_text = await run_in_threadpool(
+                    agent.analyze_medical_image, file_path, extra_ctx
+                )
+            except Exception as img_ex:
+                logger.warning(f"/upload direct image analysis failed: {img_ex}")
+                # Graceful fallback: return a placeholder so the UI doesn't error
+                response_text = (
+                    "The medical image has been received. OCR analysis encountered an issue; "
+                    "please share the document details with your healthcare provider."
+                )
+            agent_name = "MEDICAL_IMAGE_AGENT"
+
+            # Set session cookie
+            response.set_cookie(key="session_id", value=session_id)
+
+            # Persist the exchange
+            if user_id:
+                db.add_message(user_id, "user", text or "Uploaded a medical image")
+                db.add_message(user_id, "assistant", response_text, agent=agent_name)
+                _persist_lab_flags(user_id, response_text, filename=filename)
+
+            result = {
+                "status": "success",
+                "response": response_text,
+                "agent": agent_name
+            }
+
+        # Remove temporary file after sending
+        try:
+            os.remove(file_path)
+        except Exception as e:
+            print(f"Failed to remove temporary file: {str(e)}")
+
+        return result
+    except Exception as e:
+        # Cleanup on error too
+        try:
+            os.remove(file_path)
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=str(e))
+
+def get_patient_context(session_id: Optional[str] = Cookie(None)) -> str:
+    """Return profile fields + retrieved RAG chunks for a logged-in patient."""
+    payload = verify_session_cookie(session_id)
+    if not payload or payload.get("role") != "patient":
+        return ""
+    user = db.get_user(payload["user_id"])
+    profile = db.get_profile(payload["user_id"])
+    if not profile:
+        return ""
+    parts = []
+    for key in ("medical_history", "allergies", "conditions", "treatments", "gender", "blood_group", "height",
+                "weight", "blood_pressure", "medications", "family_history", "surgeries", "vaccination",
+                "smoking", "alcohol", "exercise", "diet"):
+        val = profile.get(key)
+        if val:
+            parts.append(f"{key}: {val}")
+    context = "\n".join(parts)
+    try:
+        chunks = patient_rag.retrieve(payload["user_id"], context if context else "medical history", k=3)
+        for c in chunks:
+            if c.get("content"):
+                context += ("\n" if context else "") + c["content"]
+    except Exception as e:
+        logger.warning(f"Patient RAG retrieve failed: {e}")
+    return context
+
+def augment_query(query: str, session_id: Optional[str] = Cookie(None)) -> str:
+    ctx = get_patient_context(session_id)
+    if ctx:
+        return f"[PATIENT CONTEXT]\n{ctx}\n\n[USER QUESTION]\n{query}"
+    return query
+
+
+def _extract_json_block(text: str) -> Optional[dict]:
+    """Extract the first balanced JSON object from an LLM response (or None)."""
+    import json as _json
+    t = text or ""
+    b = t.find("{")
+    if b < 0:
+        return None
+    depth = 0; end = -1; in_str = False; esc = False
+    for i in range(b, len(t)):
+        ch = t[i]
+        if in_str:
+            if esc: esc = False
+            elif ch == "\\": esc = True
+            elif ch == '"': in_str = False
+        else:
+            if ch == '"': in_str = True
+            elif ch == "{": depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0: end = i; break
+    if end > b:
+        try:
+            return _json.loads(t[b:end + 1])
+        except Exception:
+            return None
+    return None
+
+
+def _persist_lab_flags(user_id, response_text, filename=""):
+    """Best-effort persistence of OCR abnormal_flags into lab_results (worklist ranking)."""
+    if not user_id:
+        return
+    try:
+        block = _extract_json_block(response_text)
+        flags = block.get("abnormal_flags") if isinstance(block, dict) else None
+        if flags:
+            db.insert_lab_result(user_id, flags, filename=filename)
+    except Exception as e:
+        logger.warning(f"lab flag persistence skipped: {e}")
+
+@app.post("/patient/instruction")
+def patient_instruction(
+    request: Request,
+    instruction_text: str = Form(...),
+    patient_id: str = Form(...),
+    session_id: Optional[str] = Cookie(None)
+):
+    """Doctor/nurse gives an instruction to a patient; saved to DB + patient RAG."""
+    payload = verify_session_cookie(session_id)
+    if not payload or payload["role"] not in ("doctor", "nurse"):
+        raise HTTPException(status_code=403, detail="Only doctors/nurses can give instructions")
+    target = db.get_user(patient_id)
+    if not target or target.get("role") != "patient":
+        raise HTTPException(status_code=404, detail="Patient not found")
+    instruction = {
+        "id": str(uuid.uuid4()),
+        "doctor_id": payload["user_id"],
+        "patient_id": patient_id,
+        "instruction_text": instruction_text,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    db.add_instruction(instruction)
+    try:
+        patient_rag.add_instruction(instruction_text, patient_id, source=f"{payload['name']} ({payload['role']})")
+    except Exception as e:
+        logger.warning(f"Failed to add instruction to RAG: {e}")
+    return {"status": "success", "instruction_id": instruction["id"]}
+
+# Auth endpoints
+@app.post("/signup")
+async def signup(request: Request, response: Response):
+    body = await request.json()
+    email = body.get("email", "").strip().lower()
+    password = body.get("password", "")
+    role = body.get("role", "patient")
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="email and password required")
+    try:
+        profile = {
+            "name": body.get("name", ""),
+            "qualification": body.get("qualification"),
+            "dob": body.get("dob"),
+            "id_type": body.get("id_type"),
+            "id_number": body.get("id_number"),
+            "medical_history": body.get("medical_history"),
+            "allergies": body.get("allergies"),
+            "conditions": body.get("conditions"),
+            "treatments": body.get("treatments"),
+        }
+        user, cookie = auth_manager.signup(email, password, role, profile)
+        response.set_cookie(key="session_id", value=cookie, max_age=86400*30)
+        # Index patient profile into RAG so it is semantically searchable
+        if role == "patient":
+            try:
+                profile_doc = {"user_id": user["id"], **profile}
+                patient_rag.add_profile_as_document(profile_doc)
+            except Exception as se:
+                logger.warning(f"Failed to index profile to RAG: {se}")
+        return {"status": "success", "user": {"id": user["id"], "email": user["email"], "role": user["role"]}}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/login")
+async def login(request: Request, response: Response):
+    body = await request.json()
+    email = body.get("email", "").strip().lower()
+    password = body.get("password", "")
+    result = auth_manager.login(email, password)
+    if not result:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    user, cookie = result
+    response.set_cookie(key="session_id", value=cookie, max_age=86400*30)
+    return {"status": "success", "user": {"id": user["id"], "email": user["email"], "role": user["role"]}}
+
+@app.post("/logout")
+def logout(response: Response, session_id: Optional[str] = Cookie(None)):
+    auth_manager.logout(session_id)
+    response.delete_cookie(key="session_id")
+    return {"status": "success"}
+
+@app.get("/me")
+def me(session_id: Optional[str] = Cookie(None)):
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    user = db.get_user(payload["user_id"])
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    profile = db.get_profile(user["id"]) or {}
+    return {"status": "ok", "user": {"id": user["id"], "email": user["email"], "role": user["role"], "name": profile.get("name",""), "qualification": profile.get("qualification"), **{k: profile.get(k) for k in ("dob","id_type","id_number","medical_history","allergies","conditions","treatments","gender","blood_group","height","weight","blood_pressure","medications","family_history","surgeries","vaccination","smoking","alcohol","exercise","diet","emergency_name","emergency_phone")}}}
+
+@app.get("/api/doctor/patients")
+def doctor_patients(session_id: Optional[str] = Cookie(None)):
+    payload = verify_session_cookie(session_id)
+    if not payload or payload["role"] not in ("doctor","nurse"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    instructions = db.get_doctor_instructions(payload["user_id"])
+    return {"status": "ok", "patients": instructions}
+
+@app.get("/api/chat/history")
+def chat_history(session_id: Optional[str] = Cookie(None)):
+    """Return the last N chat messages for the logged-in user."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    history = db.get_chat_history(payload["user_id"], limit=50)
+    return {"status": "ok", "messages": history}
+
+@app.get("/api/patient/instructions")
+def patient_instructions(session_id: Optional[str] = Cookie(None)):
+    """Return doctor/nurse instructions for the logged-in patient."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    instructions = db.get_patient_instructions(payload["user_id"])
+    return {"status": "ok", "instructions": instructions}
+
+@app.get("/api/checkup/status")
+def checkup_status(session_id: Optional[str] = Cookie(None)):
+    """Patient's checkup status: whether they've ever completed a full body checkup."""
+    payload = verify_session_cookie(session_id)
+    if not payload or payload["role"] != "patient":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    latest = db.get_latest_checkup(payload["user_id"])
+    has_completed = bool(latest and latest.get("status") == "completed")
+    if has_completed:
+        pending = None
+    elif latest:
+        pending = {
+            "id": latest["id"],
+            "package": latest.get("package"),
+            "status": latest.get("status"),
+            "preferred_date": latest.get("preferred_date"),
+            "requested_at": latest.get("created_at"),
+        }
+    else:
+        pending = None
+    return {"status": "ok", "has_completed": has_completed, "pending": pending, "latest": latest, "packages": config.health_checkup.packages}
+
+@app.post("/api/checkup/request")
+async def checkup_request(request: Request, session_id: Optional[str] = Cookie(None)):
+    """Patient opts in for a full body checkup."""
+    payload = verify_session_cookie(session_id)
+    if not payload or payload["role"] != "patient":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    body = await request.json()
+    package = body.get("package", "full_body")
+    if package not in config.health_checkup.packages:
+        raise HTTPException(status_code=400, detail="Unknown checkup package")
+    preferred_date = body.get("preferred_date") or None
+    notes = (body.get("notes") or "")[:500]
+    checkup = db.add_checkup_request(payload["user_id"], package, preferred_date, notes)
+    return {"status": "success", "checkup": checkup}
+
+@app.get("/api/doctor/checkups")
+def doctor_checkups(session_id: Optional[str] = Cookie(None)):
+    """Doctor/nurse view of checkup requests, newest first."""
+    payload = verify_session_cookie(session_id)
+    if not payload or payload["role"] not in ("doctor", "nurse"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    checkups = db.get_checkups()
+    result = []
+    for c in checkups:
+        p = db.get_user(c["patient_id"])
+        prof = db.get_profile(c["patient_id"]) or {}
+        result.append({
+            **c,
+            "type": "checkup",
+            "patient_name": prof.get("name", "") or (p.get("email", "") if p else c["patient_id"]),
+        })
+    try:
+        for s in db.get_triage_sessions(limit=200):
+            owner = db.get_user(s["user_id"]) if s.get("user_id") else None
+            prof = db.get_profile(s["user_id"]) if s.get("user_id") else None
+            result.append({
+                **s,
+                "type": "triage",
+                "patient_name": (prof or {}).get("name", "") or (owner.get("email", "") if owner else ""),
+            })
+    except Exception as e:
+        logger.warning(f"Failed to load triage sessions for queue: {e}")
+    result.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+    return {"status": "ok", "checkups": result}
+
+class TriageSessionUpsert(BaseModel):
+    id: Optional[str] = None
+    anonym_code: str = ""
+    facility: str = ""
+    scenario: str = ""
+    facility_name: str = ""
+    age_band: str = ""
+    sex: str = ""
+    lang: str = ""
+    narrative: str = ""
+    risk: str = "standard"
+    score: int = 0
+    summary: str = ""
+    timeline: str = ""
+    chief_complaints: List[str] = []
+    red_flags: List[str] = []
+    missing_info: List[str] = []
+    followup_questions: List[str] = []
+    tests: List[dict] = []
+    follow_up_date: Optional[str] = None
+    consent: bool = False
+    status: str = "requested"
+    src: str = "local"
+    created_at: Optional[str] = None
+
+@app.post("/api/triage/sessions")
+async def upsert_triage_session(req: TriageSessionUpsert, session_id: Optional[str] = Cookie(None)):
+    """Create or update a triage session (persisted from the intake flow)."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if req.risk not in ("emergency", "urgent", "standard", "routine"):
+        req.risk = "standard"
+    if req.status not in ("requested", "scheduled", "completed"):
+        req.status = "requested"
+    session = req.model_dump()
+    session["id"] = session.get("id") or str(uuid.uuid4())
+    session["user_id"] = payload["user_id"]
+    saved = db.upsert_triage_session(session)
+    if not saved:
+        raise HTTPException(status_code=500, detail="Failed to save triage session")
+    return {"status": "ok", "session": saved}
+
+@app.patch("/api/triage/session/{ts_id}")
+async def update_triage_session(ts_id: str, request: Request, session_id: Optional[str] = Cookie(None)):
+    """Doctor/nurse advances a triage session's queue status."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if payload["role"] not in ("doctor", "nurse"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    body = await request.json()
+    status = body.get("status")
+    if status not in ("requested", "scheduled", "completed"):
+        raise HTTPException(status_code=400, detail="Invalid status")
+    ok = db.update_triage_session_status(ts_id, status, body.get("follow_up_date"))
+    if not ok:
+        raise HTTPException(status_code=404, detail="Triage session not found")
+    return {"status": "success"}
+
+@app.patch("/api/checkup/{checkup_id}")
+async def update_checkup(checkup_id: str, request: Request, session_id: Optional[str] = Cookie(None)):
+    """Doctor/nurse marks a checkup request scheduled or completed."""
+    payload = verify_session_cookie(session_id)
+    if not payload or payload["role"] not in ("doctor", "nurse"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    body = await request.json()
+    status = body.get("status")
+    if status not in ("requested", "scheduled", "completed"):
+        raise HTTPException(status_code=400, detail="Invalid status")
+    ok = db.update_checkup_status(checkup_id, status)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Checkup not found")
+    return {"status": "success"}
+
+
+# ---------- Doctor worklist (risk + critical-lab priority queue) ----------
+
+_RISK_RANK = {"emergency": 0, "urgent": 1, "standard": 2, "routine": 3}
+_QUEUE_STATUS_RANK = {"requested": 0, "scheduled": 1, "completed": 2}
+
+def _lab_severity(flags) -> int:
+    """0 none, 1 abnormal, 2 critical — from OCR abnormal_flags entries."""
+    worst = 0
+    for f in flags or []:
+        text = (f if isinstance(f, str) else json.dumps(f, ensure_ascii=False)).lower()
+        if isinstance(f, dict):
+            text = " ".join(str(v) for v in f.values()).lower()
+        if "critical" in text or "severe" in text:
+            worst = max(worst, 2)
+        else:
+            worst = max(worst, 1)
+    return worst
+
+@app.get("/api/doctor/worklist")
+def doctor_worklist(session_id: Optional[str] = Cookie(None)):
+    """Server-side priority queue: critical labs first, then triage risk, then queue status."""
+    payload = verify_session_cookie(session_id)
+    if not payload or payload["role"] not in ("doctor", "nurse"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        labs = db.get_recent_lab_results(limit=200)
+    except Exception as e:
+        logger.warning(f"worklist lab load failed: {e}")
+        labs = []
+    labs_by_user: Dict[str, dict] = {}
+    for lab in labs:
+        uid = lab.get("user_id")
+        if not uid:
+            continue
+        cur = labs_by_user.get(uid)
+        sev = _lab_severity(lab.get("flags"))
+        if not cur or sev > _lab_severity(cur.get("flags") or []) or (lab.get("created_at") or "") > (cur.get("created_at") or ""):
+            labs_by_user[uid] = lab
+
+    result = []
+    for c in db.get_checkups():
+        p = db.get_user(c["patient_id"])
+        prof = db.get_profile(c["patient_id"]) or {}
+        result.append({
+            **c,
+            "type": "checkup",
+            "patient_name": prof.get("name", "") or (p.get("email", "") if p else c["patient_id"]),
+        })
+    try:
+        for s in db.get_triage_sessions(limit=200):
+            owner = db.get_user(s["user_id"]) if s.get("user_id") else None
+            prof = db.get_profile(s["user_id"]) if s.get("user_id") else None
+            result.append({
+                **s,
+                "type": "triage",
+                "patient_name": (prof or {}).get("name", "") or (owner.get("email", "") if owner else ""),
+            })
+    except Exception as e:
+        logger.warning(f"Failed to load triage sessions for worklist: {e}")
+
+    for row in result:
+        lab = labs_by_user.get(row.get("patient_id") or row.get("user_id"))
+        row["lab_flags"] = (lab or {}).get("flags") or []
+        row["lab_severity"] = _lab_severity(row["lab_flags"])
+        row["lab_filename"] = (lab or {}).get("filename") or ""
+
+    # Stable sorts: newest first, then priority (critical labs > risk > queue status).
+    result.sort(key=lambda r: (r.get("created_at") or ""), reverse=True)
+    result.sort(key=lambda r: (-r.get("lab_severity", 0), _RISK_RANK.get(r.get("risk"), 2), _QUEUE_STATUS_RANK.get(r.get("status"), 1)))
+    return {"status": "ok", "worklist": result}
+
+
+# ---------- SOAP notes ----------
+
+@app.post("/api/triage/session/{ts_id}/soap")
+async def generate_soap_note(ts_id: str, request: Request, session_id: Optional[str] = Cookie(None)):
+    """AI-draft a SOAP note from a triage session + chat history + profile.
+
+    If the request body carries the four sections, they are saved verbatim as a
+    draft instead (doctor hand-authored / pre-edited note, no LLM call).
+    """
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if payload["role"] not in ("doctor", "nurse"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    triage = db.get_triage_session(ts_id)
+    if not triage:
+        raise HTTPException(status_code=404, detail="Triage session not found")
+    patient_id = triage.get("user_id")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if isinstance(body, dict) and any(k in body for k in ("subjective", "objective", "assessment", "plan")):
+        soap = {k: str(body.get(k) or "Not documented")
+                for k in ("subjective", "objective", "assessment", "plan")}
+    else:
+        chat = db.get_chat_history(patient_id, limit=30) if patient_id else []
+        profile = db.get_profile(patient_id) if patient_id else {}
+        soap = await run_in_threadpool(_get_soap_generator().generate, triage, chat, profile)
+    now = datetime.now(timezone.utc).isoformat()
+    note = {
+        "id": str(uuid.uuid4()),
+        "triage_session_id": ts_id,
+        "patient_id": patient_id,
+        "doctor_id": payload["user_id"],
+        "subjective": soap["subjective"],
+        "objective": soap["objective"],
+        "assessment": soap["assessment"],
+        "plan": soap["plan"],
+        "full_text": SOAPGenerator.to_full_text(soap),
+        "status": "draft",
+        "source": "triage",
+        "signed_at": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    saved = db.save_soap_note(note)
+    if not saved:
+        raise HTTPException(status_code=500, detail="Failed to save SOAP note")
+    return {"status": "ok", "note": saved}
+
+@app.get("/api/triage/session/{ts_id}/soap")
+def get_soap_for_session(ts_id: str, session_id: Optional[str] = Cookie(None)):
+    """Fetch the latest SOAP note for a triage session."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    note = db.get_soap_note_by_session(ts_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="No SOAP note for this session")
+    return {"status": "ok", "note": note}
+
+@app.patch("/api/soap/{note_id}")
+async def update_soap_note(note_id: str, request: Request, session_id: Optional[str] = Cookie(None)):
+    """Doctor edits sections and/or signs the note."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if payload["role"] not in ("doctor", "nurse"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    existing = db.get_soap_note(note_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="SOAP note not found")
+    body = await request.json()
+    updates = {}
+    for k in ("subjective", "objective", "assessment", "plan"):
+        if k in body:
+            updates[k] = str(body.get(k) or "Not documented")
+    if body.get("sign"):
+        updates["status"] = "signed"
+        updates["signed_at"] = datetime.now(timezone.utc).isoformat()
+        updates["doctor_id"] = payload["user_id"]
+    if updates:
+        merged = {**existing, **updates}
+        merged["full_text"] = SOAPGenerator.to_full_text(merged)
+        updates["full_text"] = merged["full_text"]
+    note = db.update_soap_note(note_id, updates)
+    if not note:
+        raise HTTPException(status_code=404, detail="SOAP note not found")
+    if note.get("status") == "signed" and note.get("patient_id"):
+        create_notification(db, note["patient_id"], "soap_signed",
+                            "Consultation note signed",
+                            "Your doctor has signed a SOAP note for your recent consultation.", link="/profile")
+    return {"status": "ok", "note": note}
+
+@app.get("/api/soap/{note_id}/pdf")
+def soap_note_pdf(note_id: str, session_id: Optional[str] = Cookie(None)):
+    """Branded PDF export of a SOAP note."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    note = db.get_soap_note(note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="SOAP note not found")
+    doctor_profile = db.get_profile(note.get("doctor_id")) if note.get("doctor_id") else None
+    patient_label = ""
+    if note.get("patient_id"):
+        prof = db.get_profile(note["patient_id"]) or {}
+        user = db.get_user(note["patient_id"]) or {}
+        patient_label = prof.get("name") or user.get("email", "")
+    pdf = build_soap_pdf(note, doctor_profile, patient_label)
+    if not pdf:
+        raise HTTPException(status_code=500, detail="PDF rendering failed")
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="soap_note_{note_id[:8]}.pdf"'},
+    )
+
+
+# ---------- Prescriptions ----------
+
+class PrescriptionGenerateRequest(BaseModel):
+    patient_id: str
+    triage_session_id: Optional[str] = None
+    intent: str
+
+@app.post("/api/prescription/generate")
+async def generate_prescription(req: PrescriptionGenerateRequest, session_id: Optional[str] = Cookie(None)):
+    """AI-format the doctor's prescribing intent into a structured prescription draft."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if payload["role"] not in ("doctor", "nurse"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if not req.intent.strip():
+        raise HTTPException(status_code=400, detail="intent required")
+    profile = db.get_profile(req.patient_id) or {}
+    triage = db.get_triage_session(req.triage_session_id) if req.triage_session_id else None
+    rx_data = await run_in_threadpool(_get_rx_agent().generate, req.intent, profile, triage or {})
+    rx_data = dict(rx_data)
+    rx_data["items"] = rx_data.get("items") or []
+    rx_data["warnings"] = rx_data.get("warnings") or []
+    its = rx_intx.warning_lines(rx_data["items"])
+    if its:
+        for line in its:
+            if line not in rx_data["warnings"]:
+                rx_data["warnings"].append(line)
+    interact_saved = bool(its)
+    got_it = db.save_prescription({
+        "patient_id": req.patient_id,
+        "doctor_id": payload["user_id"],
+        "triage_session_id": req.triage_session_id,
+        "items": rx_data["items"],
+        "warnings": rx_data["warnings"],
+        "advice": rx_data["advice"],
+        "status": "draft",
+    })
+    if not got_it:
+        raise HTTPException(status_code=500, detail="Failed to save prescription")
+    return {"status": "ok", "prescription": got_it, "interaction_checked": interact_saved}
+
+@app.get("/api/prescriptions")
+def list_prescriptions(patient_id: Optional[str] = None, session_id: Optional[str] = Cookie(None)):
+    """List prescriptions; patients are always scoped to their own."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if payload["role"] == "patient":
+        patient_id = payload["user_id"]
+    elif not patient_id:
+        raise HTTPException(status_code=400, detail="patient_id required")
+    rows = db.list_prescriptions(patient_id)
+    return {"status": "ok", "prescriptions": rows}
+
+@app.patch("/api/prescription/{rx_id}")
+async def update_prescription(rx_id: str, request: Request, session_id: Optional[str] = Cookie(None)):
+    """Doctor edits items/advice and/or signs the prescription."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if payload["role"] not in ("doctor", "nurse"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    existing = db.get_prescription(rx_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Prescription not found")
+    body = await request.json()
+    updates = {}
+    if "items" in body and isinstance(body["items"], list):
+        updates["items"] = body["items"]
+    if "warnings" in body and isinstance(body["warnings"], list):
+        updates["warnings"] = body["warnings"]
+    if "advice" in body:
+        updates["advice"] = str(body.get("advice") or "")
+    if body.get("sign"):
+        updates["status"] = "signed"
+        updates["signed_at"] = datetime.now(timezone.utc).isoformat()
+        updates["doctor_id"] = payload["user_id"]
+    rx = db.update_prescription(rx_id, updates)
+    if not rx:
+        raise HTTPException(status_code=404, detail="Prescription not found")
+    if rx.get("status") == "signed" and rx.get("patient_id"):
+        create_notification(db, rx["patient_id"], "rx_signed",
+                            "Prescription signed",
+                            "Your doctor has signed a prescription. You can view and export it from your profile.", link="/profile")
+    return {"status": "ok", "prescription": rx}
+
+@app.get("/api/prescription/{rx_id}/pdf")
+def prescription_pdf(rx_id: str, session_id: Optional[str] = Cookie(None)):
+    """Branded PDF export of a prescription."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    rx = db.get_prescription(rx_id)
+    if not rx:
+        raise HTTPException(status_code=404, detail="Prescription not found")
+    if payload["role"] == "patient" and rx.get("patient_id") != payload["user_id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    doctor_profile = db.get_profile(rx.get("doctor_id")) if rx.get("doctor_id") else None
+    patient_label = ""
+    if rx.get("patient_id"):
+        prof = db.get_profile(rx["patient_id"]) or {}
+        user = db.get_user(rx["patient_id"]) or {}
+        patient_label = prof.get("name") or user.get("email", "")
+    pdf = build_prescription_pdf(rx, doctor_profile, patient_label)
+    if not pdf:
+        raise HTTPException(status_code=500, detail="PDF rendering failed")
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="prescription_{rx_id[:8]}.pdf"'},
+    )
+
+
+# ---------- Notifications + daily digest ----------
+
+@app.get("/api/notifications")
+def list_notifications(unread: int = 0, limit: int = 50, session_id: Optional[str] = Cookie(None)):
+    """In-app notifications for the logged-in user (bell dropdown)."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    rows = db.get_notifications(payload["user_id"], unread_only=bool(unread), limit=limit)
+    unread_count = db.notifications_unread_count(payload["user_id"])
+    return {"status": "ok", "notifications": rows, "unread": unread_count}
+
+@app.post("/api/notifications/{notification_id}/read")
+def mark_notification_read(notification_id: str, session_id: Optional[str] = Cookie(None)):
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    ok = db.mark_notification_read(notification_id, payload["user_id"])
+    if not ok:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return {"status": "ok"}
+
+@app.post("/api/notifications/read-all")
+def mark_all_notifications_read(session_id: Optional[str] = Cookie(None)):
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    db.mark_all_notifications_read(payload["user_id"])
+    return {"status": "ok"}
+
+@app.get("/api/notifications/digest")
+def get_daily_digest(session_id: Optional[str] = Cookie(None)):
+    """Compute today's clinical digest (no dispatch)."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return {"status": "ok", "digest": build_daily_digest(db)}
+
+@app.post("/api/notifications/digest")
+def dispatch_daily_digest(session_id: Optional[str] = Cookie(None)):
+    """Build + send today's digest to every doctor/nurse as a notification."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    digest, sent = dispatch_digest(db)
+    return {"status": "ok", "digest": digest, "dispatched": sent}
+
+
+# ---------- Invoices / billing ----------
+
+def _invoice_number() -> str:
+    return "INV-" + datetime.now(timezone.utc).strftime("%Y%m%d") + "-" + uuid.uuid4().hex[:5].upper()
+
+
+class InvoiceCreateRequest(BaseModel):
+    patient_id: str
+    prescription_id: Optional[str] = None
+    triage_session_id: Optional[str] = None
+    items: Optional[List[dict]] = None
+    subtotal: Optional[float] = None
+    tax: Optional[float] = 0
+    currency: str = "INR"
+    notes: str = ""
+
+@app.post("/api/invoices")
+async def create_invoice(req: InvoiceCreateRequest, session_id: Optional[str] = Cookie(None)):
+    """Doctor bills a patient (optionally from a prescription) with an invoice."""
+    payload = verify_session_cookie(session_id)
+    if not payload or payload["role"] not in ("doctor", "nurse"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    patient = db.get_user(req.patient_id)
+    if not patient or patient.get("role") != "patient":
+        raise HTTPException(status_code=404, detail="Patient not found")
+    items = list(req.items or [])
+    if req.prescription_id and not items:
+        rx = db.get_prescription(req.prescription_id)
+        if not rx:
+            raise HTTPException(status_code=404, detail="Prescription not found")
+        if rx.get("patient_id") != req.patient_id:
+            raise HTTPException(status_code=400, detail="Prescription belongs to another patient")
+        items = [{"description": (i.get("drug") if isinstance(i, dict) else str(i)),
+                  "qty": 1, "rate": 0.0, "amount": 0.0} for i in rx.get("items", [])]
+    if not items:
+        items = [{"description": "Consultation", "qty": 1, "rate": 0.0, "amount": 0.0}]
+    subtotal = float(req.subtotal) if req.subtotal is not None else round(sum(float(i.get("amount") or 0) for i in items), 2)
+    tax = float(req.tax or 0)
+    total = round(subtotal + tax, 2)
+    now = datetime.now(timezone.utc).isoformat()
+    invoice = {
+        "invoice_no": _invoice_number(),
+        "patient_id": req.patient_id,
+        "doctor_id": payload["user_id"],
+        "triage_session_id": req.triage_session_id,
+        "prescription_id": req.prescription_id,
+        "items": items,
+        "subtotal": subtotal, "tax": tax, "total": total,
+        "currency": req.currency, "status": "unpaid", "paid_at": None,
+        "notes": req.notes, "created_at": now, "updated_at": now,
+    }
+    saved = db.create_invoice(invoice)
+    if not saved:
+        raise HTTPException(status_code=500, detail="Failed to save invoice")
+    create_notification(db, req.patient_id, "invoice",
+                        f"Invoice {saved.get('invoice_no')} raised",
+                        f"Your consultation invoice of {saved.get('currency')} {saved.get('total')} is ready. Tap to view / download.", link="/profile")
+    return {"status": "ok", "invoice": saved}
+
+@app.get("/api/invoices")
+def list_invoices(session_id: Optional[str] = Cookie(None)):
+    """Invoices for the logged-in user (patient: own; doctor/nurse: facility-wide)."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if payload["role"] == "patient":
+        rows = db.list_invoices(patient_id=payload["user_id"])
+    else:
+        rows = db.list_invoices()
+    for inv in rows:
+        prof = db.get_profile(inv.get("patient_id")) or {}
+        usr = db.get_user(inv.get("patient_id")) or {}
+        inv["patient_name"] = prof.get("name", "") or (usr.get("email", "") if usr else "")
+    return {"status": "ok", "invoices": rows}
+
+@app.patch("/api/invoice/{invoice_id}")
+async def update_invoice(invoice_id: str, request: Request, session_id: Optional[str] = Cookie(None)):
+    """Patient marks their invoice paid; doctor/nurse edits or marks paid."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    existing = db.get_invoice(invoice_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if payload["role"] == "patient" and existing.get("patient_id") != payload["user_id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    body = await request.json()
+    updates = {}
+    if payload["role"] != "patient":
+        if "items" in body and isinstance(body["items"], list):
+            updates["items"] = body["items"]
+        if "notes" in body:
+            updates["notes"] = str(body.get("notes") or "")
+    status = body.get("status")
+    if status in ("paid", "unpaid"):
+        updates["status"] = status
+        updates["paid_at"] = datetime.now(timezone.utc).isoformat() if status == "paid" else None
+    if not updates:
+        raise HTTPException(status_code=400, detail="No updates provided")
+    invoice = db.update_invoice(invoice_id, updates)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if invoice.get("status") == "paid":
+        create_notification(db, invoice.get("doctor_id") or "", "invoice",
+                            f"Invoice {invoice.get('invoice_no')} paid",
+                            f"Payment of {invoice.get('currency')} {invoice.get('total')} recorded.", link="/")
+    return {"status": "ok", "invoice": invoice}
+
+@app.get("/api/invoice/{invoice_id}/pdf")
+def invoice_pdf(invoice_id: str, session_id: Optional[str] = Cookie(None)):
+    """Branded invoice PDF."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    invoice = db.get_invoice(invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if payload["role"] == "patient" and invoice.get("patient_id") != payload["user_id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    doctor_profile = db.get_profile(invoice.get("doctor_id")) if invoice.get("doctor_id") else None
+    patient_label = ""
+    if invoice.get("patient_id"):
+        prof = db.get_profile(invoice["patient_id"]) or {}
+        usr = db.get_user(invoice["patient_id"]) or {}
+        patient_label = prof.get("name") or usr.get("email", "")
+    pdf = build_invoice_pdf(invoice, doctor_profile, patient_label)
+    if not pdf:
+        raise HTTPException(status_code=500, detail="PDF rendering failed")
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="invoice_{invoice_id[:8]}.pdf"'},
+    )
+
+
+# ---------- Medication interaction checker ----------
+
+class DrugInteractionRequest(BaseModel):
+    drugs: List[str] = []
+    items: Optional[List[dict]] = None
+
+@app.post("/api/drug/interactions")
+def check_drug_interactions(req: DrugInteractionRequest, session_id: Optional[str] = Cookie(None)):
+    """Deterministic pairwise drug-interaction check on a bundled curated dataset."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    names = list(req.drugs or [])
+    if not names and req.items:
+        names = [i.get("drug") for i in req.items if isinstance(i, dict) and i.get("drug")]
+    conflicts = rx_intx.check_drugs(names)
+    return {"status": "ok", "interactions": conflicts}
+
+
+@app.get("/api/doctor/doctors")
+def get_doctors(session_id: Optional[str] = Cookie(None)):
+    """List doctors (role=doctor) with profile name."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    doctors = db.get_doctors()
+    return {"status": "ok", "doctors": doctors}
+
+@app.get("/api/doctor/availability")
+def get_availability(doctor_id: str, session_id: Optional[str] = Cookie(None)):
+    """List availability slots for a doctor."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    slots = db.get_availability(doctor_id)
+    return {"status": "ok", "availability": slots}
+
+@app.post("/api/doctor/availability")
+async def add_availability(request: Request, session_id: Optional[str] = Cookie(None)):
+    """Doctor/nurse adds an available time slot."""
+    payload = verify_session_cookie(session_id)
+    if not payload or payload["role"] not in ("doctor", "nurse"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    body = await request.json()
+    doctor_id = payload["user_id"]
+    date = body.get("date")
+    start_time = body.get("start_time")
+    end_time = body.get("end_time")
+    max_slots = body.get("max_slots", 1)
+    if not date or not start_time or not end_time:
+        raise HTTPException(status_code=400, detail="date, start_time, end_time required")
+    slot = db.add_availability(doctor_id, date, start_time, end_time, max_slots)
+    if not slot:
+        raise HTTPException(status_code=500, detail="Failed to add availability")
+    return {"status": "ok", "availability": slot}
+
+@app.post("/api/call/book")
+async def book_call(request: Request, session_id: Optional[str] = Cookie(None)):
+    """Patient books a call against an availability slot."""
+    payload = verify_session_cookie(session_id)
+    if not payload or payload["role"] != "patient":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    body = await request.json()
+    doctor_id = body.get("doctor_id")
+    availability_id = body.get("availability_id")
+    notes = body.get("notes", "")
+    if not availability_id:
+        raise HTTPException(status_code=400, detail="availability_id required")
+    slot = next((s for s in db.get_availability(doctor_id) if s.get("id") == availability_id), None)
+    if not slot:
+        raise HTTPException(status_code=404, detail="Availability slot not found")
+    scheduled_at = f"{slot.get('date')}T{slot.get('start_time')}"
+    booking = db.book_call(payload["user_id"], doctor_id, availability_id, scheduled_at, notes)
+    if not booking:
+        raise HTTPException(status_code=500, detail="Failed to book call")
+    if doctor_id:
+        create_notification(db, doctor_id, "booking_requested",
+                            "New call booking request",
+                            "A patient has requested a consult call. Confirm or reject it in Book Call.", link="/")
+    return {"status": "ok", "booking": booking}
+
+@app.get("/api/call/bookings")
+def get_bookings(session_id: Optional[str] = Cookie(None)):
+    """List bookings for the logged-in user (patient: theirs; doctor: theirs)."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    bookings = db.get_bookings(payload["user_id"], payload["role"])
+    return {"status": "ok", "bookings": bookings}
+
+@app.patch("/api/call/booking/{booking_id}")
+async def update_booking(booking_id: str, request: Request, session_id: Optional[str] = Cookie(None)):
+    """Doctor/nurse confirms a booking; patient cancels their own."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    body = await request.json()
+    status = body.get("status")
+    if status not in ("confirmed", "completed", "cancelled"):
+        raise HTTPException(status_code=400, detail="Invalid status")
+    ok = db.update_booking_status(booking_id, status)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    return {"status": "success"}
+
+@app.put("/api/profile")
+async def update_profile(request: Request, session_id: Optional[str] = Cookie(None)):
+    """Patient updates their own medical profile; re-indexes RAG."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    body = await request.json()
+    user = db.get_user(payload["user_id"])
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    current = db.get_profile(user["id"]) or {}
+    editable_keys = ("name", "dob", "medical_history", "allergies", "conditions", "treatments", "id_type", "id_number", "qualification",
+                     "gender", "blood_group", "height", "weight", "blood_pressure", "medications", "family_history",
+                     "surgeries", "vaccination", "smoking", "alcohol", "exercise", "diet",
+                     "emergency_name", "emergency_phone")
+    merged = dict(current)
+    for k in editable_keys:
+        if k in body:
+            merged[k] = body.get(k)
+    merged["user_id"] = user["id"]
+    merged.setdefault("created_at", current.get("created_at"))
+    db.upsert_profile(merged)
+    # Re-index the enriched profile into Qdrant
+    try:
+        patient_rag.delete_patient_data(user["id"])
+        patient_rag.add_profile_as_document(merged)
+    except Exception as e:
+        logger.warning(f"Failed to re-index profile to RAG: {e}")
+    return {"status": "success", "user": merged}
+
+@app.get("/profile", response_class=HTMLResponse)
+def profile_page(request: Request, session_id: Optional[str] = Cookie(None)):
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Please log in"})
+    user = db.get_user(payload["user_id"])
+    if not user or user["role"] != "patient":
+        return templates.TemplateResponse(request, "dashboard.html", {"request": request, "role": user["role"], "name": (db.get_profile(user["id"]) or {}).get("name",""), "error": "Health profile is for patients"})
+    profile = db.get_profile(user["id"]) or {}
+    return templates.TemplateResponse(request, "profile.html", {"request": request, "role": user["role"], "name": profile.get("name",""), "profile": profile})
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard(request: Request, session_id: Optional[str] = Cookie(None)):
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Please log in"})
+    user = db.get_user(payload["user_id"])
+    profile = db.get_profile(user["id"]) or {}
+    role = user["role"]
+    if role == "patient":
+        return templates.TemplateResponse(request, "dashboard.html", {"request": request, "role": role, "name": profile.get("name",""), "profile": profile})
+    # doctor/nurse: list their patients
+    patients = db.get_doctor_instructions(user["id"])
+    return templates.TemplateResponse(request, "dashboard.html", {"request": request, "role": role, "name": profile.get("name",""), "patients": patients})
+
+@app.get("/home", response_class=HTMLResponse)
+def home_page(request: Request, session_id: Optional[str] = Cookie(None)):
+    """Port of the reference Triage frontend onto the existing backend.
+
+    A single tabbed triage page wired to the existing endpoints:
+    intake/summary -> POST /chat, report OCR -> POST /upload,
+    reviewer queue -> GET /api/doctor/checkups + PATCH /api/checkup/{id},
+    referral -> POST /patient/instruction, timeline/audit -> /api/chat/history
+    and /api/patient/instructions. No new backend routes or tables.
+    """
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Please log in"})
+    user = db.get_user(payload["user_id"])
+    if not user:
+        return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Please log in"})
+    profile = db.get_profile(user["id"]) or {}
+    return templates.TemplateResponse(request, "home.html", {
+        "request": request,
+        "role": user["role"],
+        "name": profile.get("name", ""),
+        "email": user["email"],
+    })
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    return templates.TemplateResponse(request, "login.html", {"request": request})
+
+@app.get("/signup", response_class=HTMLResponse)
+def signup_page(request: Request):
+    return templates.TemplateResponse(request, "signup.html", {"request": request})
+
+@app.post("/validate")
+async def validate_medical_output(request: Request, response: Response, session_id: Optional[str] = Cookie(None)):
+    """Resume the interrupted graph with human validation feedback."""
+    body = await request.json()
+    thread_id = body.get("thread_id")
+    decision = body.get("decision")
+    comments = body.get("comments", "")
+    if not thread_id:
+        raise HTTPException(status_code=400, detail="thread_id is required")
+
+    thread_cfg = {"configurable": {"thread_id": thread_id}}
+    graph = get_graph()
+    state_snapshot = graph.get_state(thread_cfg)
+    messages = state_snapshot.values.get('messages', [])
+
+    feedback = f"Validation Result: {decision}"
+    if comments:
+        feedback += f"\nComments: {comments}"
+    new_messages = messages + [HumanMessage(content=feedback)]
+    updated_state = state_snapshot.values.copy()
+    updated_state['messages'] = new_messages
+
+    result = graph.invoke(updated_state, thread_cfg)
+
+    payload = verify_session_cookie(session_id)
+    uid = payload["user_id"] if payload else None
+    if uid:
+        final_text = result['messages'][-1].content
+        agent_name = result.get("agent_name")
+        db.add_message(uid, "assistant", final_text, agent=agent_name)
+        try:
+            patient_rag.add_patient_data(uid, f"Q: [validated]\nA: {final_text}", source=f"chat/{agent_name}")
+        except Exception as se:
+            logger.warning(f"Failed to index validated chat to RAG: {se}")
+
+    return {"status": "success", "response": result['messages'][-1].content, "agent": result.get("agent_name")}
+
+@app.get("/api/speech-config")
+async def get_speech_config():
+    """Report server-side voice availability to the client (no secrets)."""
+    has_key = bool(config.speech.eleven_labs_api_key)
+    return {
+        "available": has_key and PYDUB_AVAILABLE,
+        "elevenlabs_key": has_key,
+        "pydub": PYDUB_AVAILABLE,
+        "engine": "elevenlabs-scribe" if (has_key and PYDUB_AVAILABLE) else None,
+    }
+
+@app.post("/transcribe")
+async def transcribe_audio(audio: UploadFile = File(...)):
+    """Endpoint to transcribe speech using ElevenLabs API"""
+    if not config.speech.eleven_labs_api_key:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Server-side voice transcription is not configured (ELEVEN_LABS_API_KEY missing)."}
+        )
+    if not audio.filename:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "No audio file selected"}
+        )
+    
+    try:
+        # Save the audio file temporarily
+        os.makedirs(SPEECH_DIR, exist_ok=True)
+        temp_audio = f"./{SPEECH_DIR}/speech_{uuid.uuid4()}.webm"
+        
+        # Read and save the file
+        audio_content = await audio.read()
+        with open(temp_audio, "wb") as f:
+            f.write(audio_content)
+        
+        # Debug: Print file size to check if it's empty
+        file_size = os.path.getsize(temp_audio)
+        print(f"Received audio file size: {file_size} bytes")
+        
+        if file_size == 0:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Received empty audio file"}
+            )
+        
+# Convert to MP3
+        mp3_path = f"./{SPEECH_DIR}/speech_{uuid.uuid4()}.mp3"
+
+        if not PYDUB_AVAILABLE:
+            return JSONResponse(status_code=503, content={"error": "Audio processing unavailable (pydub not supported on this Python version)"})
+        try:
+            audio = AudioSegment.from_file(temp_audio)
+            audio.export(mp3_path, format="mp3")
+            
+            # Debug: Print MP3 file size
+            mp3_size = os.path.getsize(mp3_path)
+            print(f"Converted MP3 file size: {mp3_size} bytes")
+
+            with open(mp3_path, "rb") as mp3_file:
+                audio_data = mp3_file.read()
+            print(f"Converted audio file into byte array successfully!")
+
+            transcription = client.speech_to_text.convert(
+                file=audio_data,
+                model_id="scribe_v1",
+                tag_audio_events=True,
+                language_code="eng",
+                diarize=True,
+            )
+            
+            # Clean up temp files
+            try:
+                os.remove(temp_audio)
+                os.remove(mp3_path)
+                print(f"Deleted temp files: {temp_audio}, {mp3_path}")
+            except Exception as e:
+                print(f"Could not delete file: {e}")
+            
+            if transcription.text:
+                return {"transcript": transcription.text}
+            else:
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": f"API error: {transcription}", "details": transcription.text}
+                )
+
+        except Exception as e:
+            print(f"Error processing audio: {str(e)}")
+            return JSONResponse(
+                status_code=500,
+                content={"error": f"Error processing audio: {str(e)}"}
+            )
+                
+    except Exception as e:
+        print(f"Transcription error: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
+
+@app.post("/generate-speech")
+async def generate_speech(request: SpeechRequest):
+    """Endpoint to generate speech using ElevenLabs API"""
+    try:
+        text = request.text
+        selected_voice_id = request.voice_id
+        
+        if not text:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Text is required"}
+            )
+        
+        # Define API request to ElevenLabs
+        elevenlabs_url = f"https://api.elevenlabs.io/v1/text-to-speech/{selected_voice_id}/stream"
+        headers = {
+            "Accept": "audio/mpeg",
+            "Content-Type": "application/json",
+            "xi-api-key": config.speech.eleven_labs_api_key
+        }
+        payload = {
+            "text": text,
+            "model_id": "eleven_monolingual_v1",
+            "voice_settings": {
+                "stability": 0.5,
+                "similarity_boost": 0.5
+            }
+        }
+
+        # Send request to ElevenLabs API
+        response = requests.post(elevenlabs_url, headers=headers, json=payload)
+
+        if response.status_code != 200:
+            return JSONResponse(
+                status_code=500,
+                content={"error": f"Failed to generate speech, status: {response.status_code}", "details": response.text}
+            )
+        
+        # Save the audio file temporarily
+        os.makedirs(SPEECH_DIR, exist_ok=True)
+        temp_audio_path = f"./{SPEECH_DIR}/{uuid.uuid4()}.mp3"
+        with open(temp_audio_path, "wb") as f:
+            f.write(response.content)
+
+        # Return the generated audio file
+        return FileResponse(
+            path=temp_audio_path,
+            media_type="audio/mpeg",
+            filename="generated_speech.mp3"
+        )
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
+
+# Add exception handler for request entity too large
+@app.exception_handler(413)
+async def request_entity_too_large(request, exc):
+    return JSONResponse(
+        status_code=413,
+        content={
+            "status": "error",
+            "agent": "System",
+            "response": f"File too large. Maximum size allowed: {config.api.max_image_upload_size}MB"
+        }
+    )
+
+if __name__ == "__main__":
+    cert_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "certs")
+    certfile = os.getenv("SSL_CERTFILE", os.path.join(cert_dir, "cert.pem"))
+    keyfile = os.getenv("SSL_KEYFILE", os.path.join(cert_dir, "key.pem"))
+    ssl_kwargs = {}
+    if os.path.exists(certfile) and os.path.exists(keyfile):
+        ssl_kwargs = {"ssl_certfile": certfile, "ssl_keyfile": keyfile}
+    uvicorn.run(app, host=config.api.host, port=config.api.port, **ssl_kwargs)
