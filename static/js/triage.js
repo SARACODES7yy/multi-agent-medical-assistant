@@ -1187,45 +1187,21 @@ async function renderCalendar() {
   $('#triumph-book-call-week-label').textContent = fmtDay(weekStart) + ' — ' + fmtDay(weekEnd);
 }
 function bookCallDoctorSlot(doctorId, date, time) {
-  fetch('/api/doctor/availability?doctor_id=' + encodeURIComponent(doctorId), { credentials: 'include' })
-    .then(function(r){ return r.json(); })
-    .then(function(j) {
-      var slots = (j.status === 'ok' && j.availability) ? j.availability : [];
-      var slot = slots.find(function(s) { return s.date === date && (s.start_time === time || s.start_time.startsWith(time)); });
-      var doBook = function(availId) {
-        fetch('/api/call/book', {
-          method: 'POST',
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({doctor_id: doctorId, availability_id: availId, notes: ''}),
-          credentials: 'include'
-        }).then(function(r) { return r.json(); }).then(function(res) {
-          if (res.status === 'ok') {
-            loadBookings();
-            renderCalendar();
-          } else {
-            alert('Booking failed: ' + (res.detail || 'Unknown error'));
-          }
-        });
-      };
-      if (slot) {
-        doBook(slot.id);
-      } else {
-        fetch('/api/doctor/availability', {
-          method: 'POST',
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({doctor_id: doctorId, date: date, start_time: time, end_time: time + ':30', max_slots: 1}),
-          credentials: 'include'
-        }).then(function(r){ return r.json(); }).then(function(j2) {
-          if (j2.status === 'ok' && j2.availability) {
-            doBook(j2.availability.id);
-          } else {
-            alert('Booking failed: Could not create slot.');
-          }
-        }).catch(function(err) {
-          alert('Booking error: ' + err.message);
-        });
-      }
-    });
+  fetch('/api/call/book', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({doctor_id: doctorId, date: date, start_time: time, notes: ''}),
+    credentials: 'include'
+  }).then(function(r) { return r.json(); }).then(function(res) {
+    if (res.status === 'ok') {
+      loadBookings();
+      renderCalendar();
+    } else {
+      alert('Booking failed: ' + (res.detail || 'Unknown error'));
+    }
+  }).catch(function(err) {
+    alert('Booking error: ' + err.message);
+  });
 }
 async function toggleDocAvailability(doctorId, date, time) { try { var j = await fetch('/api/doctor/availability', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({doctor_id: doctorId, date: date, start_time: time, end_time: time+':30', max_slots: 1}), credentials: 'include' }).then(function(r){ return r.json(); }); if (j.status === 'ok') renderCalendar(); } catch (e) {} }
 async function loadBookings() { try { var d = await fetch('/api/call/bookings', { credentials: 'include' }); var j = await d.json(); var bookings = (j.status === 'ok' && j.bookings) ? j.bookings : []; var html = ''; if (!bookings.length) { html = '<div class="triumph-booking-empty"><i class="fas fa-list"></i><p>No bookings yet.</p></div>'; } else { html = '<table class="triumph-bookings-table"><tr><th>Doctor</th><th>Date/Time</th><th>Status</th><th></th></tr>'; bookings.forEach(function(b) { var statusCls = 'triumph-status-' + (b.status || 'requested'); html += '<tr><td>' + esc(b.doctor_name || b.doctor_id) + '</td><td>' + esc(b.scheduled_at) + '</td><td><span class="triumph-status-badge ' + statusCls + '">' + esc(b.status || 'unknown') + '</span></td><td>' + (b.status === 'requested' && state.role === 'patient' ? '<button class="btn-outline btn-sm" onclick="updateBookingStatus(\'' + b.id + '\',\'cancelled\')">Cancel</button>' : '') + '</td></tr>'; }); html += '</table>'; } $('#triumph-book-call-bookings').innerHTML = html; } catch (e) { $('#triumph-book-call-bookings').innerHTML = '<div class="triumph-booking-empty"><p>Could not load bookings.</p></div>'; } }

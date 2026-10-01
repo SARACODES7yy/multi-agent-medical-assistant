@@ -1578,14 +1578,23 @@ async def book_call(request: Request, session_id: Optional[str] = Cookie(None)):
     body = await request.json()
     doctor_id = body.get("doctor_id")
     availability_id = body.get("availability_id")
+    date = body.get("date")
+    start_time = body.get("start_time")
     notes = body.get("notes", "")
-    if not availability_id:
-        raise HTTPException(status_code=400, detail="availability_id required")
-    slot = next((s for s in db.get_availability(doctor_id) if s.get("id") == availability_id), None)
+    if not doctor_id:
+        raise HTTPException(status_code=400, detail="doctor_id required")
+    slot = None
+    if availability_id:
+        slot = next((s for s in db.get_availability(doctor_id) if s.get("id") == availability_id), None)
+    if not slot and date and start_time:
+        slots = db.get_availability(doctor_id)
+        slot = next((s for s in slots if s.get("date") == date and s.get("start_time", "").startswith(start_time)), None)
+        if not slot:
+            slot = db.add_availability(doctor_id, date, start_time, start_time + ":30", 1)
     if not slot:
         raise HTTPException(status_code=404, detail="Availability slot not found")
     scheduled_at = f"{slot.get('date')}T{slot.get('start_time')}"
-    booking = db.book_call(payload["user_id"], doctor_id, availability_id, scheduled_at, notes)
+    booking = db.book_call(payload["user_id"], doctor_id, slot.get("id"), scheduled_at, notes)
     if not booking:
         raise HTTPException(status_code=500, detail="Failed to book call")
     if doctor_id:
