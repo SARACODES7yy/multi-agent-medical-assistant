@@ -1131,17 +1131,23 @@ async function renderCalendar() {
     var j = await resp.json();
     var slots = (j.status === 'ok' && j.availability) ? j.availability : [];
     
-    // Synthesize default weekday available slots (09:00, 10:00, 11:00, 14:00, 15:00, 16:00) if none created yet
-    if (!slots.length) {
-      days.forEach(function(d) {
-        if (d.getDay() >= 1 && d.getDay() <= 5) { // Mon-Fri
-          var dStr = getLocalDateStr(d);
-          ['09:00', '10:00', '11:00', '14:00', '15:00', '16:00'].forEach(function(st) {
+    // Always fill missing weekday slots with defaults (09:00, 10:00, 11:00, 14:00, 15:00, 16:00)
+    var existingKeys = {};
+    slots.forEach(function(s) {
+      var k = s.date + '|' + (s.start_time.length === 5 ? s.start_time : s.start_time.slice(0,5));
+      existingKeys[k] = true;
+    });
+    days.forEach(function(d) {
+      if (d.getDay() >= 1 && d.getDay() <= 5) {
+        var dStr = getLocalDateStr(d);
+        ['09:00', '10:00', '11:00', '14:00', '15:00', '16:00'].forEach(function(st) {
+          var k = dStr + '|' + st;
+          if (!existingKeys[k]) {
             slots.push({ id: 'default_' + dStr + '_' + st, doctor_id: state.bookCallDoctor, date: dStr, start_time: st, max_slots: 1 });
-          });
-        }
-      });
-    }
+          }
+        });
+      }
+    });
 
     var availMap = {};
     slots.forEach(function(s) {
