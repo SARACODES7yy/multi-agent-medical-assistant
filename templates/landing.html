@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediAssist AI — Triage notes, ready for human review</title>
+    <meta name="description" content="A multi-agent clinical assistant that organizes symptoms, reports and scans into structured notes for qualified human review.">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🩺</text></svg>">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/landing.css">
+    <script>(function(){try{var s=localStorage.getItem('theme');var m=window.matchMedia('(prefers-color-scheme: light)').matches;document.documentElement.setAttribute('data-theme',s||(m?'light':'dark'));}catch(e){}document.documentElement.classList.add('js');})();</script>
+</head>
+<body class="lp">
+    <div class="lp-progress" id="progress"></div>
+
+    <nav class="lp-nav" id="nav">
+        <div class="wrap">
+            <a href="/" class="lp-brand"><div class="brand-tile small"><i class="fas fa-stethoscope"></i></div><b>MediAssist</b></a>
+            <div class="lp-links">
+                <a href="#agents">Agents</a><a href="#how">How it works</a><a href="#roles">Who it's for</a><a href="#safety">Safety</a>
+            </div>
+            <div class="lp-actions">
+                <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme" aria-label="Toggle theme"><i class="theme-icon fas fa-moon"></i></button>
+                <a href="/login" class="btn-outline" id="nav-login">Sign in</a>
+                <a href="/signup" class="btn-primary" id="nav-cta">Get started</a>
+            </div>
+        </div>
+    </nav>
+
+    <header class="hero">
+        <div class="hero-grid"></div><div class="hero-glow"></div>
+        <div class="wrap">
+            <div>
+                <span class="status-pill is-live reveal-load" style="--d:.05s"><span class="live-dot"></span> Non-diagnostic · Reviewer-facing</span>
+                <h1 class="serif reveal-load" style="--d:.15s">Triage notes, <em>ready</em> for a human to decide.</h1>
+                <p class="lead reveal-load" style="--d:.3s">MediAssist brings specialist AI agents together to read symptoms, voice, lab reports and scans, then assembles a structured note for qualified clinicians to review.</p>
+                <div class="hero-cta reveal-load" style="--d:.45s">
+                    <a href="/signup" class="btn-primary btn-lg" id="hero-cta">Create an account <i class="fas fa-arrow-right"></i></a>
+                    <a href="/home" class="btn-outline btn-lg"><i class="fas fa-comment-medical"></i> Try the assistant</a>
+                </div>
+                <div class="hero-note reveal-load" style="--d:.6s"><i class="fas fa-lock"></i> Educational prototype · Synthetic data only</div>
+            </div>
+
+            <div class="monitor reveal-load" id="monitor" style="--d:.35s">
+                <div class="float-chip"><span class="live-dot" style="width:7px;height:7px;border-radius:50%;background:var(--trace);display:inline-block"></span> 4 agents active</div>
+                <div class="monitor-top"><span>Triage summary</span><span class="dots"><i></i><i></i><i></i></span></div>
+                <div class="ecg">
+                    <svg viewBox="0 0 400 92" preserveAspectRatio="none" aria-hidden="true"><path d="M0 46 H70 L80 46 L88 20 L98 76 L108 40 L120 46 H190 L200 46 L208 20 L218 76 L228 40 L240 46 H310 L320 46 L328 20 L338 76 L348 40 L360 46 H400"/></svg>
+                </div>
+                <div class="note">
+                    <div class="note-row"><i class="fas fa-comment-medical"></i><div><b>Symptoms captured</b>Fever for 3 days, mild cough, fatigue.</div></div>
+                    <div class="note-row"><i class="fas fa-file-image"></i><div><b>Report read</b>Key values extracted and flagged for context.</div></div>
+                    <div class="note-row review"><i class="fas fa-user-doctor"></i><div><b>Needs human review</b>Queued for a qualified reviewer to confirm.</div></div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <div class="marquee" aria-hidden="true">
+        <div class="marquee-track" id="marquee">
+            <span><i class="fas fa-comment-medical"></i> Conversational intake</span>
+            <span><i class="fas fa-database"></i> Grounded medical RAG</span>
+            <span><i class="fas fa-search"></i> Live web &amp; PubMed search</span>
+            <span><i class="fas fa-file-image"></i> Report &amp; scan reading</span>
+            <span><i class="fas fa-microphone"></i> Voice input</span>
+            <span><i class="fas fa-notes-medical"></i> SOAP notes</span>
+            <span><i class="fas fa-prescription"></i> Prescription drafts</span>
+            <span><i class="fas fa-triangle-exclamation"></i> Drug interaction checks</span>
+            <span><i class="fas fa-file-pdf"></i> PDF export</span>
+        </div>
+    </div>
+
+    <section class="section" id="agents">
+        <div class="wrap">
+            <div class="section-head reveal"><span class="eyebrow">The agents</span>
+                <h2 class="serif">One question in. The right specialist answers.</h2>
+                <p>A decision layer routes every request to the agent best suited to it, so answers stay grounded rather than generic.</p></div>
+            <div class="cards">
+                <div class="card reveal" style="--d:0s"><div class="brand-tile"><i class="fas fa-comment-medical"></i></div><h3>Conversation</h3><p>Plain-language health Q&amp;A and structured symptom intake, guided by guardrails.</p></div>
+                <div class="card reveal" style="--d:.08s"><div class="brand-tile"><i class="fas fa-database"></i></div><h3>Medical RAG</h3><p>Retrieves, re-ranks and cites from ingested medical documents and patient records.</p></div>
+                <div class="card reveal" style="--d:.16s"><div class="brand-tile"><i class="fas fa-search"></i></div><h3>Web search</h3><p>Pulls current sources from the web and PubMed when the knowledge base falls short.</p></div>
+                <div class="card reveal" style="--d:0s"><div class="brand-tile"><i class="fas fa-file-image"></i></div><h3>Image analysis</h3><p>Reads uploaded reports and medical images, extracting the details that matter.</p></div>
+                <div class="card reveal" style="--d:.08s"><div class="brand-tile"><i class="fas fa-notes-medical"></i></div><h3>SOAP notes</h3><p>Turns a session into a clean Subjective, Objective, Assessment, Plan draft.</p></div>
+                <div class="card reveal" style="--d:.16s"><div class="brand-tile"><i class="fas fa-prescription"></i></div><h3>Prescription drafts</h3><p>Prepares drafts with interaction checks, for a clinician to edit and approve.</p></div>
+            </div>
+        </div>
+    </section>
+
+    <section class="section" id="how">
+        <div class="wrap">
+            <div class="section-head reveal"><span class="eyebrow">How it works</span>
+                <h2 class="serif">From first symptom to reviewed note.</h2></div>
+            <div class="steps reveal" id="steps">
+                <div class="steps-line"></div>
+                <div class="step-item"><div class="step-dot">1</div><h4>Describe or upload</h4><p>Type, speak, or attach a report or scan.</p></div>
+                <div class="step-item"><div class="step-dot">2</div><h4>Agents collaborate</h4><p>Routing picks the right specialists to read and retrieve.</p></div>
+                <div class="step-item"><div class="step-dot">3</div><h4>Structured note</h4><p>Urgency signals and findings are organized into one summary.</p></div>
+                <div class="step-item"><div class="step-dot">4</div><h4>Human review</h4><p>A qualified reviewer confirms, edits or escalates.</p></div>
+            </div>
+        </div>
+    </section>
+
+    <section class="section" id="roles">
+        <div class="wrap">
+            <div class="section-head reveal"><span class="eyebrow">Who it's for</span>
+                <h2 class="serif">A workspace for every role in the room.</h2></div>
+            <div class="roles">
+                <div class="role reveal" style="--d:0s"><span class="tag">Patient</span><h3>Ask, upload, follow up</h3><ul>
+                    <li><i class="fas fa-check"></i>Chat or speak with the assistant</li><li><i class="fas fa-check"></i>Keep a private health profile</li><li><i class="fas fa-check"></i>Book a call and track follow-ups</li></ul></div>
+                <div class="role reveal" style="--d:.08s"><span class="tag">Nurse</span><h3>Capture and prioritize</h3><ul>
+                    <li><i class="fas fa-check"></i>Run guided triage intake</li><li><i class="fas fa-check"></i>See urgency signals at a glance</li><li><i class="fas fa-check"></i>Hand off to the reviewer queue</li></ul></div>
+                <div class="role reveal" style="--d:.16s"><span class="tag">Doctor</span><h3>Review and decide</h3><ul>
+                    <li><i class="fas fa-check"></i>Work a prioritized reviewer queue</li><li><i class="fas fa-check"></i>Edit SOAP notes and prescriptions</li><li><i class="fas fa-check"></i>Export PDFs with a full audit trail</li></ul></div>
+            </div>
+        </div>
+    </section>
+
+    <section class="section" id="safety">
+        <div class="wrap">
+            <div class="safety reveal">
+                <div class="shield"><i class="fas fa-user-shield"></i></div>
+                <div><h3>Non-diagnostic by design.</h3>
+                <p>MediAssist <strong>organizes information</strong> and highlights urgency signals. It never diagnoses and never prescribes on its own. Every output is advisory, and the final clinical decision stays with a qualified human reviewer.</p></div>
+            </div>
+        </div>
+    </section>
+
+    <section class="cta reveal" id="cta">
+        <svg viewBox="0 0 260 44" aria-hidden="true"><path d="M0 22 H92 L99 22 L104 8 L111 38 L118 20 L126 20 L132 22 H184 L191 22 L196 8 L203 38 L210 20 L218 20 L224 22 H260"/></svg>
+        <div class="wrap">
+            <h2 class="serif">Give your reviewers a head start.</h2>
+            <p>Create a free account and see how a triage note comes together.</p>
+            <div class="hero-cta"><a href="/signup" class="btn-primary btn-lg" id="cta-btn">Get started <i class="fas fa-arrow-right"></i></a><a href="/login" class="btn-outline btn-lg">Sign in</a></div>
+        </div>
+    </section>
+
+    <footer class="lp-foot"><div class="wrap">
+        <span>© MediAssist AI · Educational prototype. Not a substitute for professional medical advice.</span>
+        <span>Synthetic / sample data only</span>
+    </div></footer>
+
+    <script src="/static/js/landing.js"></script>
+</body>
+</html>

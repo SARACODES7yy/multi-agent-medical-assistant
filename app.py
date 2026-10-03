@@ -280,7 +280,7 @@ class SpeechRequest(BaseModel):
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     """Serve the main HTML page"""
-    return templates.TemplateResponse(request, "index.html", {"request": request})
+    return templates.TemplateResponse(request, "landing.html", {"request": request})
 
 @app.get("/health")
 def health_check():
