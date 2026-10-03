@@ -118,6 +118,16 @@ _digest_task = None
 @asynccontextmanager
 async def lifespan(fastapp: FastAPI):
     global _digest_task
+    # Pre-download RapidOCR models so first upload doesn't timeout
+    if os.getenv("DISABLE_OCR_PRELOAD", "").lower() != "true":
+        async def _preload_ocr():
+            try:
+                from rapidocr import RapidOCR
+                RapidOCR()
+                logger.info("RapidOCR models pre-downloaded")
+            except Exception as e:
+                logger.warning(f"RapidOCR preload failed (will retry on first use): {e}")
+        asyncio.create_task(_preload_ocr())
     if os.getenv("DISABLE_SCHEDULER", "").lower() == "true":
         yield
         return
@@ -733,20 +743,13 @@ async def ocr_extract(
         downscale_image_file(file_path)
 
     try:
-        from utils.isolated_worker import run_isolated
-        timeout = int(os.getenv("OCR_TIMEOUT", "90"))
-        res = await run_in_threadpool(run_isolated, "ocr", [file_path], timeout)
-        if not res or not res.get("texts"):
+        agent = _get_image_agent()
+        response_text = await run_in_threadpool(agent.analyze_medical_image, file_path, "")
+        if not response_text or len(response_text.strip()) < 10:
             return JSONResponse(
                 status_code=500,
                 content={"status": "error", "detail": "OCR could not read any text from this file. Try a clearer image."},
             )
-        ocr_text = "\n".join(res.get("texts", []) or []).strip()
-
-        agent = _get_image_agent()
-        response_text = await run_in_threadpool(agent.analyze_medical_image, file_path, "")
-        if not response_text or len(response_text.strip()) < 10:
-            response_text = f"```json\n{{\"document_type\": \"Medical Report\", \"key_values\": [], \"abnormal_flags\": [], \"summary\": \"{ocr_text[:500]}\", \"missing_information\": []}}\n```"
 
         block = _extract_json_block(response_text)
         clinical_insight = ""
