@@ -391,6 +391,7 @@ function handleFile(file) {
       if (html.replace(/<[^>]+>/g, '').trim() === docTypeLabel) html += '<div class="triage-finding-card"><div class="triage-finding-test">No structured fields extracted</div><div class="triage-finding-value">' + esc((d.raw_text || '').slice(0, 200)) + '</div></div>';
       $('#extracts').innerHTML = html;
       $('#upload-area').style.display = '';
+      var dz = $('#dropzone'); if (dz) dz.innerHTML = '<i class="fas fa-cloud-arrow-up triage-dropzone-icon"></i><p class="triage-dropzone-title" id="dropzone-title">Click to upload a lab/report image</p><p class="triage-dropzone-sub">PNG / JPG / JPEG / PDF · AI-based analysis</p>';
       toggleGenerate();
       addAudit('ocr', 'OCR processed ' + file.name + ' — ' + tests.length + ' findings extracted.');
     })
