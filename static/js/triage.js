@@ -359,54 +359,28 @@ function handleFile(file) {
   if (errEl) errEl.style.display = 'none';
   $('#dropzone-title').textContent = file.name;
   var dz = $('#dropzone'); if (dz) { dz.innerHTML = '<div class="triage-spinner" style="margin:0 auto 10px;"></div><p class="triage-note-loading" style="text-align:center;">Processing report…</p>'; }
-  var fd = new FormData(); fd.append('file', file); fd.append('query', '');
-  fetch('/chat', { method: 'POST', body: fd, credentials: 'include' })
-    .then(function(r) {
-      if (!r.ok) {
-        return r.json().then(function(errData) {
-          var detail = (errData && (errData.response || errData.detail || errData.message)) || ('Server returned error HTTP ' + r.status);
-          throw new Error(detail);
-        }).catch(function(e) {
-          if (e && e.message && !e.message.startsWith('HTTP') && !e.message.startsWith('Server returned')) {
-            throw e;
-          }
-          throw new Error('Server returned error HTTP ' + r.status);
-        });
-      }
-      return r.json();
-    })
+  var fd = new FormData(); fd.append('file', file);
+  fetch('/api/ocr', { method: 'POST', body: fd, credentials: 'include' })
+    .then(function(r) { return r.json(); })
     .then(function(d) {
-      var text = (d && d.response) || '';
-      var tests = null;
-      var ocrMeta = null;
-      // The server may answer with status:"validation_required" (Human-Validation gate) and
-      // the structured OCR block fenced in message (```json ... ```) instead of response_json.
-      // Recover it so the response tab still renders the structured findings.
-      var haveStructured = d && d.response_json;
-      if (!haveStructured && d && (d.status === 'validation_required') && d.message) {
-        var blocked = d.message.match(/```(?:json)?\s*([\s\S]*?)```/);
-        var rawJson = blocked ? blocked[1] : d.message;
-        var firstBrace = rawJson.indexOf('{');
-        if (firstBrace >= 0) {
-          try { d.response_json = JSON.parse(rawJson.substring(firstBrace)); } catch (e) { d.response_json = null; }
-          haveStructured = !!d.response_json;
-        }
+      if (d.status !== 'success') {
+        throw new Error(d.detail || 'OCR failed');
       }
-      var parsed = haveStructured ? applyStructuredOCR(d.response_json) : null;
-      if (parsed) { tests = parsed.tests; ocrMeta = parsed.meta; }
-      if (parsed) { state.extractedOCRMeta = parsed.meta; }
-      state.pendingFollowUpDate = (ocrMeta && ocrMeta.followUpDate) || null;
+      var parsed = applyStructuredOCR(d);
+      var tests = parsed.tests;
+      var ocrMeta = parsed.meta;
+      state.extractedOCRMeta = ocrMeta;
+      state.pendingFollowUpDate = ocrMeta.followUpDate || null;
       if (state.pendingFollowUpDate) addAudit('followup_scheduled', 'Follow-up scheduled for ' + state.pendingFollowUpDate + ' from OCR follow-up line.');
-      if (!tests) tests = parseTestsFromText(text);
       tests.forEach(function(t) { if (!state.extractedTests.find(function(e) { return e.name === t.name && e.value === t.value; })) state.extractedTests.push(t); });
-      var docTypeLabel = (ocrMeta && ocrMeta.documentType) || 'Lab / Report';
+      var docTypeLabel = ocrMeta.documentType || 'Lab / Report';
       var html = '';
       html += '<div class="triage-finding-card"><div class="triage-finding-test">' + esc(docTypeLabel) + '</div></div>';
-      if (ocrMeta && ocrMeta.abnormalFlags && ocrMeta.abnormalFlags.length) html += '<div class="triage-finding-card"><div class="triage-finding-test">Abnormal Flags</div><div class="triage-finding-value">' + ocrMeta.abnormalFlags.map(function(f) { return '<span class="triage-flag-pill triage-flag-critical">' + esc(f) + '</span>'; }).join(' ') + '</div></div>';
+      if (ocrMeta.abnormalFlags && ocrMeta.abnormalFlags.length) html += '<div class="triage-finding-card"><div class="triage-finding-test">Abnormal Flags</div><div class="triage-finding-value">' + ocrMeta.abnormalFlags.map(function(f) { return '<span class="triage-flag-pill triage-flag-critical">' + esc(f) + '</span>'; }).join(' ') + '</div></div>';
       (tests || []).forEach(function(t) { html += '<div class="triage-finding-card"><div class="triage-finding-test">' + esc(t.name) + '</div><div class="triage-finding-value">' + esc(String(t.value)) + ' ' + esc(t.unit) + ' <span class="triage-flag-pill triage-flag-' + esc(t.flag) + '">' + esc(t.flag) + '</span></div></div>'; });
-      if (ocrMeta && ocrMeta.summary) html += '<div class="triage-finding-card"><div class="triage-finding-test">AI Summary</div><div class="triage-finding-value" style="white-space:pre-wrap;">' + esc(ocrMeta.summary) + '</div></div>';
-      if (ocrMeta && ocrMeta.clinicalInsight) html += '<div class="triage-finding-card"><div class="triage-finding-test">Clinical Insight</div><div class="triage-finding-value" style="white-space:pre-wrap;">' + esc(ocrMeta.clinicalInsight) + '</div></div>';
-      if (html.replace(/<[^>]+>/g, '').trim() === docTypeLabel) html += '<div class="triage-finding-card"><div class="triage-finding-test">No structured fields extracted</div><div class="triage-finding-value">' + esc(text.slice(0, 200)) + '</div></div>';
+      if (ocrMeta.summary) html += '<div class="triage-finding-card"><div class="triage-finding-test">AI Summary</div><div class="triage-finding-value" style="white-space:pre-wrap;">' + esc(ocrMeta.summary) + '</div></div>';
+      if (ocrMeta.clinicalInsight) html += '<div class="triage-finding-card"><div class="triage-finding-test">Clinical Insight</div><div class="triage-finding-value" style="white-space:pre-wrap;">' + esc(ocrMeta.clinicalInsight) + '</div></div>';
+      if (html.replace(/<[^>]+>/g, '').trim() === docTypeLabel) html += '<div class="triage-finding-card"><div class="triage-finding-test">No structured fields extracted</div><div class="triage-finding-value">' + esc((d.raw_text || '').slice(0, 200)) + '</div></div>';
       $('#extracts').innerHTML = html;
       $('#upload-area').style.display = '';
       toggleGenerate();
@@ -414,7 +388,6 @@ function handleFile(file) {
     })
     .catch(function(e) {
       var raw = (e && e.message) ? e.message : String(e);
-      raw = raw.replace(/^(Upload failed:\s*)+/gi, '').trim();
       var friendly = raw;
       if (raw.indexOf('502') >= 0 || raw.indexOf('504') >= 0) {
         friendly = 'The server timed out analyzing that file. Please try again in a moment.';

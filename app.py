@@ -690,6 +690,89 @@ async def upload_file(
             pass
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.post("/api/ocr")
+async def ocr_extract(
+    response: Response,
+    file: UploadFile = File(None),
+    session_id: Optional[str] = Cookie(None),
+):
+    """Dedicated OCR endpoint — AI extracts structured data from medical reports.
+
+    Does NOT save to chat history. Returns structured JSON for the frontend
+    OCR findings panel.
+    """
+    if not file or not file.filename:
+        return JSONResponse(status_code=400, content={"status": "error", "detail": "No file provided"})
+
+    filename = file.filename
+    is_pdf_file = is_pdf(filename)
+    is_img_file = is_image(filename)
+
+    if not is_pdf_file and not is_img_file:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "detail": "Unsupported file type. Allowed: PNG, JPG, JPEG, PDF"},
+        )
+
+    file_content = await file.read()
+    max_size = config.api.max_pdf_upload_size if is_pdf_file else config.api.max_image_upload_size
+    if len(file_content) > max_size * 1024 * 1024:
+        return JSONResponse(
+            status_code=413,
+            content={"status": "error", "detail": f"File too large. Maximum size: {max_size}MB"},
+        )
+
+    save_name = secure_filename(f"{uuid.uuid4()}_{filename}")
+    file_path = os.path.join(UPLOAD_FOLDER, save_name)
+    with open(file_path, "wb") as f:
+        f.write(file_content)
+
+    if is_img_file:
+        downscale_image_file(file_path)
+
+    try:
+        agent = _get_image_agent()
+        response_text = await run_in_threadpool(agent.analyze_medical_image, file_path, "")
+
+        block = _extract_json_block(response_text)
+        clinical_insight = ""
+        if "## Clinical Insight" in response_text:
+            clinical_insight = response_text.split("## Clinical Insight", 1)[1].strip()
+            clinical_insight = clinical_insight.split("---", 1)[0].strip()
+
+        result = {
+            "status": "success",
+            "document_type": (block or {}).get("document_type", "Unknown"),
+            "date": (block or {}).get("date"),
+            "patient_details": (block or {}).get("patient_details"),
+            "key_values": (block or {}).get("key_values", []),
+            "abnormal_flags": (block or {}).get("abnormal_flags", []),
+            "summary": (block or {}).get("summary", ""),
+            "missing_information": (block or {}).get("missing_information", []),
+            "clinical_insight": clinical_insight,
+            "raw_text": response_text,
+        }
+
+        if session_id:
+            payload = verify_session_cookie(session_id)
+            if payload:
+                _persist_lab_flags(payload["user_id"], response_text, filename=filename)
+
+        return result
+    except Exception as e:
+        logger.warning(f"/api/ocr failed: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "detail": "OCR analysis failed. Please try again."},
+        )
+    finally:
+        try:
+            os.remove(file_path)
+        except Exception:
+            pass
+
+
 def get_patient_context(session_id: Optional[str] = Cookie(None)) -> str:
     """Return profile fields + retrieved RAG chunks for a logged-in patient."""
     payload = verify_session_cookie(session_id)
