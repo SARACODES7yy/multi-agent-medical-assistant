@@ -1062,7 +1062,7 @@ function bindBookCall() {
   state.bookCallWeek = new Date(now.setDate(diff));
   state.bookCallWeek.setHours(0,0,0,0);
   var el = $('#book-call-content'); if (!el) return;
-  el.innerHTML = '<div class="triumph-booking-guide"><strong>How it works:</strong> Patients — pick a doctor and an available time slot to book a call. Doctors — set your availability below. All bookings appear in your bookings list below.</div><div class="triumph-booking-layout"><div class="triumph-booking-doctors"><h3><i class="fas fa-user-doctor me-2"></i>Doctors</h3><div id="triumph-book-call-doctors" style="max-height:520px;overflow-y:auto;"></div></div><div class="triumph-booking-main"><div class="triumph-booking-header"><h3><i class="fas fa-calendar-days me-2"></i>Availability</h3><div class="triumph-booking-week-nav"><button class="btn-outline btn-sm" onclick="shiftWeek(-1)"><i class="fas fa-chevron-left"></i></button> <span id="triumph-book-call-week-label" style="min-width:170px;text-align:center;"></span> <button class="btn-outline btn-sm" onclick="shiftWeek(1)"><i class="fas fa-chevron-right"></i></button></div></div><div id="triumph-book-call-calendar" class="triumph-booking-calendar" style="overflow-x:auto;"></div></div></div><div class="triumph-bookings-card triage-card"><div class="triumph-booking-header"><h3><i class="fas fa-list me-2"></i>My Bookings</h3></div><div id="triumph-book-call-bookings"></div></div>';
+  el.innerHTML = '<div class="triumph-booking-guide"><strong>How it works:</strong> Patients — pick a doctor and an available time slot to book a call. Doctors — set your availability below. All bookings appear in your bookings list below.</div><div class="triumph-booking-layout"><div class="triumph-booking-doctors"><h3><i class="fas fa-user-doctor me-2"></i>Doctors</h3><select id="triumph-book-call-doctors" class="triumph-booking-select" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg-raise);color:var(--ink);font-size:13.5px;cursor:pointer;"><option value="">Select a doctor...</option></select></div><div class="triumph-booking-main"><div class="triumph-booking-header"><h3><i class="fas fa-calendar-days me-2"></i>Availability</h3><div class="triumph-booking-week-nav"><button class="btn-outline btn-sm" onclick="shiftWeek(-1)"><i class="fas fa-chevron-left"></i></button> <span id="triumph-book-call-week-label" style="min-width:170px;text-align:center;"></span> <button class="btn-outline btn-sm" onclick="shiftWeek(1)"><i class="fas fa-chevron-right"></i></button></div></div><div id="triumph-book-call-calendar" class="triumph-booking-calendar" style="overflow-x:auto;"></div></div></div><div class="triumph-bookings-card triage-card"><div class="triumph-booking-header"><h3><i class="fas fa-list me-2"></i>My Bookings</h3></div><div id="triumph-book-call-bookings"></div></div>';
   loadDoctors();
 }
 function shiftWeek(n) { state.bookCallWeek.setDate(state.bookCallWeek.getDate() + n * 7); renderCalendar(); }
@@ -1071,17 +1071,25 @@ async function loadDoctors() {
     var d = await fetch('/api/doctor/doctors', { credentials: 'include' });
     var j = await d.json();
     var doctors = (j.status === 'ok' && j.doctors) ? j.doctors : [];
-    if (!state.bookCallDoctor && doctors.length > 0) {
-      state.bookCallDoctor = doctors[0].id;
+    var sel = $('#triumph-book-call-doctors');
+    if (sel) {
+      sel.innerHTML = '<option value="">Select a doctor...</option>';
+      doctors.forEach(function(doc) {
+        var opt = document.createElement('option');
+        opt.value = doc.id;
+        opt.textContent = (doc.name || doc.email) + ' — ' + (doc.qualification || 'General Practitioner');
+        sel.appendChild(opt);
+      });
+      sel.onchange = function() { state.bookCallDoctor = sel.value; renderCalendar(); };
+      if (!state.bookCallDoctor && doctors.length > 0) {
+        state.bookCallDoctor = doctors[0].id;
+        sel.value = doctors[0].id;
+      }
+      if (state.bookCallDoctor) sel.value = state.bookCallDoctor;
     }
-    var html = '';
-    doctors.forEach(function(doc) {
-      html += '<div class="triumph-booking-doc' + (state.bookCallDoctor === doc.id ? ' is-active' : '') + '" data-id="' + esc(doc.id) + '" onclick="selectDoctor(\'' + esc(doc.id) + '\')"><div class="triumph-booking-doc-name">' + esc(doc.name || doc.email) + '</div><div class="triumph-booking-doc-qual">' + esc(doc.qualification || 'General Practitioner') + '</div><div class="triumph-booking-doc-avail"><i class="fas fa-check-circle"></i> ' + (doc.status || 'active') + '</div></div>';
-    });
-    $('#triumph-book-call-doctors').innerHTML = html || '<div class="triumph-booking-empty"><i class="fas fa-user-doctor"></i><p>No doctors found.</p></div>';
     renderCalendar();
   } catch (e) {
-    $('#triumph-book-call-doctors').innerHTML = '<div class="triumph-booking-empty"><p>Could not load doctors.</p></div>';
+    if (sel) sel.innerHTML = '<option value="">Could not load doctors</option>';
   }
 }
 function selectDoctor(id) { state.bookCallDoctor = id; loadDoctors(); }
