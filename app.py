@@ -700,7 +700,8 @@ async def ocr_extract(
     """Dedicated OCR endpoint — AI extracts structured data from medical reports.
 
     Does NOT save to chat history. Returns structured JSON for the frontend
-    OCR findings panel.
+    OCR findings panel. Runs OCR in an isolated subprocess so an OOM/crash
+    never takes down the web process or returns an empty body.
     """
     if not file or not file.filename:
         return JSONResponse(status_code=400, content={"status": "error", "detail": "No file provided"})
@@ -732,8 +733,20 @@ async def ocr_extract(
         downscale_image_file(file_path)
 
     try:
+        from utils.isolated_worker import run_isolated
+        timeout = int(os.getenv("OCR_TIMEOUT", "90"))
+        res = await run_in_threadpool(run_isolated, "ocr", [file_path], timeout)
+        if not res or not res.get("texts"):
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "detail": "OCR could not read any text from this file. Try a clearer image."},
+            )
+        ocr_text = "\n".join(res.get("texts", []) or []).strip()
+
         agent = _get_image_agent()
         response_text = await run_in_threadpool(agent.analyze_medical_image, file_path, "")
+        if not response_text or len(response_text.strip()) < 10:
+            response_text = f"```json\n{{\"document_type\": \"Medical Report\", \"key_values\": [], \"abnormal_flags\": [], \"summary\": \"{ocr_text[:500]}\", \"missing_information\": []}}\n```"
 
         block = _extract_json_block(response_text)
         clinical_insight = ""

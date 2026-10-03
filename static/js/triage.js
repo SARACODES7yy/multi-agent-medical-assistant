@@ -361,7 +361,15 @@ function handleFile(file) {
   var dz = $('#dropzone'); if (dz) { dz.innerHTML = '<div class="triage-spinner" style="margin:0 auto 10px;"></div><p class="triage-note-loading" style="text-align:center;">Processing report…</p>'; }
   var fd = new FormData(); fd.append('file', file);
   fetch('/api/ocr', { method: 'POST', body: fd, credentials: 'include' })
-    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      if (!r.ok) {
+        return r.text().then(function(t) { throw new Error(t || ('Server error HTTP ' + r.status)); });
+      }
+      return r.text().then(function(t) {
+        if (!t || !t.trim()) throw new Error('Server returned empty response. The server may be busy — please try again.');
+        try { return JSON.parse(t); } catch (e) { throw new Error('Server returned invalid data. Please try again.'); }
+      });
+    })
     .then(function(d) {
       if (d.status !== 'success') {
         throw new Error(d.detail || 'OCR failed');
