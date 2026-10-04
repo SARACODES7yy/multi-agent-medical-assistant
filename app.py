@@ -1809,6 +1809,21 @@ def home_page(request: Request, session_id: Optional[str] = Cookie(None)):
         "email": user["email"],
     })
 
+@app.get("/chat", response_class=HTMLResponse)
+def chat_page(request: Request, session_id: Optional[str] = Cookie(None)):
+    """Full multi-agent chat UI (index.html). Requires login; anonymous -> login page."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Please log in"})
+    user = db.get_user(payload["user_id"])
+    if not user:
+        return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Please log in"})
+    profile = db.get_profile(user["id"]) or {}
+    return templates.TemplateResponse(request, "index.html", {
+        "request": request,
+        "name": profile.get("name", ""),
+    })
+
 @app.get("/emergency", response_class=HTMLResponse)
 def emergency_page(request: Request):
     """Hidden standalone emergency ambulance request page (trial mode).
