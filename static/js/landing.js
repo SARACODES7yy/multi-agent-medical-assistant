@@ -76,7 +76,7 @@
     fetch('/me', { credentials: 'include' }).then(function (r) {
         if (!r.ok) return;
         var login = $('#nav-login'), cta = $('#nav-cta');
-        if (login) { login.href = '/home'; login.textContent = 'Open assistant'; }
+        if (login) { login.href = '/chat'; login.textContent = 'Open assistant'; }
         if (cta) { cta.href = '/home'; cta.textContent = 'Dashboard'; }
         ['#hero-cta', '#cta-btn'].forEach(function (s) {
             var b = $(s); if (b) { b.href = '/home'; b.innerHTML = 'Go to dashboard <i class="fas fa-arrow-right"></i>'; }
