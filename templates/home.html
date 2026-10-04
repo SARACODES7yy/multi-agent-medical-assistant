@@ -161,20 +161,17 @@
                     <div class="triage-card">
                         <div class="triage-card-head">
                             <h3><i class="fas fa-file-image me-2 triage-blue"></i>Lab Report Upload (local OCR)</h3>
-                            <span class="triage-card-sub">Attach a photo of a lab report / prescription / discharge summary. Server OCR extracts text + structured values.</span>
-                        </div>
-                        <div class="triage-upload-hint" id="upload-hint">
-                            <i class="fas fa-triangle-exclamation me-1"></i>
-                            Attach reports <strong>after</strong> you click &ldquo;Generate Triage Note&rdquo; (which creates the session). Generate the note first, then upload reports and re-summarize if needed.
+                            <span class="triage-card-sub">Attach a photo of a lab report / prescription / discharge summary. Server OCR extracts text + structured values. Upload before or after writing symptoms — findings feed into the triage note automatically.</span>
                         </div>
                         <div id="upload-area">
                             <div class="triage-dropzone" id="dropzone">
-                                <input type="file" id="report-file" accept="image/png,image/jpeg,application/pdf" style="display:none">
+                                <input type="file" id="report-file" accept="image/png,image/jpeg,application/pdf" multiple style="display:none">
                                 <i class="fas fa-cloud-arrow-up triage-dropzone-icon"></i>
-                                <p class="triage-dropzone-title" id="dropzone-title">Click to upload a lab/report image</p>
-                                <p class="triage-dropzone-sub">PNG / JPG / JPEG / PDF · server RapidOCR + structured field extraction</p>
+                                <p class="triage-dropzone-title" id="dropzone-title">Click or drag &amp; drop lab reports here</p>
+                                <p class="triage-dropzone-sub">PNG / JPG / JPEG / PDF · up to 5 files · AI-based analysis</p>
                             </div>
                             <div id="upload-error" class="triage-alert triage-alert-warn" style="display:none;"></div>
+                            <div id="file-queue" class="triage-file-queue"></div>
                             <div id="extracts"></div>
                         </div>
                     </div>
@@ -455,6 +452,6 @@
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="/static/js/triage.js?v=8"></script>
+    <script src="/static/js/triage.js?v=9"></script>
 </body>
 </html>

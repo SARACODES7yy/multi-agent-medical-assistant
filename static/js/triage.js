@@ -343,73 +343,141 @@ function bindDropzone() {
   var dz = $('#dropzone'); if (!dz) return;
   var fi = $('#report-file'); if (!fi) return;
   dz.addEventListener('click', function() { fi.click(); });
-  dz.addEventListener('dragover', function(e) { e.preventDefault(); dz.classList.add('is-dragover'); });
-  dz.addEventListener('dragleave', function() { dz.classList.remove('is-dragover'); });
-  dz.addEventListener('drop', function(e) { e.preventDefault(); dz.classList.remove('is-dragover'); handleFile(e.dataTransfer.files[0]); });
-  fi.addEventListener('change', function() { handleFile(fi.files[0]); fi.value = ''; });
+  ['dragenter', 'dragover'].forEach(function(ev) {
+    dz.addEventListener(ev, function(e) { e.preventDefault(); dz.classList.add('is-dragover'); });
+  });
+  ['dragleave', 'drop'].forEach(function(ev) {
+    dz.addEventListener(ev, function(e) { e.preventDefault(); dz.classList.remove('is-dragover'); });
+  });
+  dz.addEventListener('drop', function(e) {
+    var files = Array.prototype.slice.call(e.dataTransfer.files || []);
+    if (files.length) handleFiles(files);
+  });
+  fi.addEventListener('change', function() {
+    var files = Array.prototype.slice.call(fi.files || []);
+    if (files.length) handleFiles(files);
+    fi.value = '';
+  });
 }
-function handleFile(file) {
-  if (!file) return;
-  var ext = file.name.split('.').pop().toLowerCase();
-  var errEl = $('#upload-error');
-  if (['png','jpg','jpeg','pdf'].indexOf(ext) === -1) {
-    if (errEl) { errEl.textContent = 'Unsupported file type. Allowed: PNG, JPG, JPEG, PDF.'; errEl.style.display = ''; }
-    return;
-  }
-  if (errEl) errEl.style.display = 'none';
-  $('#dropzone-title').textContent = file.name;
-  var dz = $('#dropzone'); if (dz) { dz.innerHTML = '<div class="triage-spinner" style="margin:0 auto 10px;"></div><p class="triage-note-loading" style="text-align:center;">Processing report…</p>'; }
-  var fd = new FormData(); fd.append('file', file);
-  fetch('/api/ocr', { method: 'POST', body: fd, credentials: 'include' })
-    .then(function(r) {
-      if (!r.ok) {
-        return r.text().then(function(t) { throw new Error(t || ('Server error HTTP ' + r.status)); });
-      }
-      return r.text().then(function(t) {
-        if (!t || !t.trim()) throw new Error('Server returned empty response. The server may be busy — please try again.');
-        try { return JSON.parse(t); } catch (e) { throw new Error('Server returned invalid data. Please try again.'); }
-      });
-    })
-    .then(function(d) {
-      if (d.status !== 'success') {
-        throw new Error(d.detail || 'OCR failed');
-      }
-      var parsed = applyStructuredOCR(d);
-      var tests = parsed.tests;
-      var ocrMeta = parsed.meta;
-      state.extractedOCRMeta = ocrMeta;
-      state.pendingFollowUpDate = ocrMeta.followUpDate || null;
-      if (state.pendingFollowUpDate) addAudit('followup_scheduled', 'Follow-up scheduled for ' + state.pendingFollowUpDate + ' from OCR follow-up line.');
-      tests.forEach(function(t) { if (!state.extractedTests.find(function(e) { return e.name === t.name && e.value === t.value; })) state.extractedTests.push(t); });
-      var docTypeLabel = ocrMeta.documentType || 'Lab / Report';
-      var html = '';
-      html += '<div class="triage-finding-card"><div class="triage-finding-test">' + esc(docTypeLabel) + '</div></div>';
-      if (ocrMeta.abnormalFlags && ocrMeta.abnormalFlags.length) html += '<div class="triage-finding-card"><div class="triage-finding-test">Abnormal Flags</div><div class="triage-finding-value">' + ocrMeta.abnormalFlags.map(function(f) { return '<span class="triage-flag-pill triage-flag-critical">' + esc(f) + '</span>'; }).join(' ') + '</div></div>';
-      (tests || []).forEach(function(t) { html += '<div class="triage-finding-card"><div class="triage-finding-test">' + esc(t.name) + '</div><div class="triage-finding-value">' + esc(String(t.value)) + ' ' + esc(t.unit) + ' <span class="triage-flag-pill triage-flag-' + esc(t.flag) + '">' + esc(t.flag) + '</span></div></div>'; });
-      if (ocrMeta.summary) html += '<div class="triage-finding-card"><div class="triage-finding-test">AI Summary</div><div class="triage-finding-value" style="white-space:pre-wrap;">' + esc(ocrMeta.summary) + '</div></div>';
-      if (ocrMeta.clinicalInsight) html += '<div class="triage-finding-card"><div class="triage-finding-test">Clinical Insight</div><div class="triage-finding-value" style="white-space:pre-wrap;">' + esc(ocrMeta.clinicalInsight) + '</div></div>';
-      if (html.replace(/<[^>]+>/g, '').trim() === docTypeLabel) html += '<div class="triage-finding-card"><div class="triage-finding-test">No structured fields extracted</div><div class="triage-finding-value">' + esc((d.raw_text || '').slice(0, 200)) + '</div></div>';
-      $('#extracts').innerHTML = html;
-      $('#upload-area').style.display = '';
-      var dz = $('#dropzone'); if (dz) dz.innerHTML = '<i class="fas fa-cloud-arrow-up triage-dropzone-icon"></i><p class="triage-dropzone-title" id="dropzone-title">Click to upload a lab/report image</p><p class="triage-dropzone-sub">PNG / JPG / JPEG / PDF · AI-based analysis</p>';
-      toggleGenerate();
-      addAudit('ocr', 'OCR processed ' + file.name + ' — ' + tests.length + ' findings extracted.');
-    })
-    .catch(function(e) {
-      var raw = (e && e.message) ? e.message : String(e);
-      var friendly = raw;
-      if (raw.indexOf('502') >= 0 || raw.indexOf('504') >= 0) {
-        friendly = 'The server timed out analyzing that file. Please try again in a moment.';
-      } else if (raw.indexOf('413') >= 0) {
-        friendly = 'File is too large. Allowed formats: PNG/JPG under 5MB, PDF under 10MB.';
-      } else if (raw.indexOf('400') >= 0) {
-        friendly = 'Could not read document. Please upload a clear photo or standard PDF lab report.';
-      } else if (!raw) {
-        friendly = 'Upload failed. Please try again.';
-      }
-      if (errEl) { errEl.textContent = friendly; errEl.style.display = ''; }
-      var dz = $('#dropzone'); if (dz) dz.innerHTML = '<i class="fas fa-cloud-arrow-up triage-dropzone-icon"></i><p class="triage-dropzone-title" id="dropzone-title">Click to upload a lab/report image</p><p class="triage-dropzone-sub">PNG / JPG / JPEG / PDF · AI-based analysis</p>';
+var OCR_QUEUE = [];
+function ocrQueuedCount() { return OCR_QUEUE.filter(function(f) { return f.status === 'queued' || f.status === 'processing'; }).length; }
+function renderFileQueue() {
+  var q = $('#file-queue'); if (!q) return;
+  if (!OCR_QUEUE.length) { q.innerHTML = ''; q.style.display = 'none'; return; }
+  q.style.display = '';
+  q.innerHTML = OCR_QUEUE.map(function(f, i) {
+    var icon = f.ext === 'pdf' ? 'fa-file-pdf' : 'fa-file-image';
+    var statusHtml = '';
+    if (f.status === 'processing') statusHtml = '<div class="triage-file-progress"><div class="triage-file-progress-fill" style="width:' + (f.progress || 0) + '%"></div></div>';
+    if (f.status === 'done') statusHtml = '<span class="triage-file-status triage-file-status-ok"><i class="fas fa-circle-check"></i> ' + (f.testCount != null ? f.testCount + ' findings' : 'Processed') + '</span>';
+    if (f.status === 'error') statusHtml = '<span class="triage-file-status triage-file-status-err"><i class="fas fa-circle-xmark"></i> ' + esc(f.error || 'Failed') + '</span>';
+    return '<div class="triage-file-chip">' +
+      '<i class="fas ' + icon + ' triage-file-icon"></i>' +
+      '<div class="triage-file-info"><div class="triage-file-name" title="' + esc(f.name) + '">' + esc(f.name) + '</div>' +
+      '<div class="triage-file-size">' + f.sizeText + '</div></div>' +
+      statusHtml +
+      (f.status === 'queued' || f.status === 'processing' ? '' : '<button class="triage-file-remove" data-idx="' + i + '" title="Remove"><i class="fas fa-xmark"></i></button>') +
+      '</div>';
+  }).join('');
+  q.querySelectorAll('.triage-file-remove').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var idx = parseInt(btn.getAttribute('data-idx'), 10);
+      var f = OCR_QUEUE[idx];
+      if (!f || f.status === 'processing') return;
+      OCR_QUEUE.splice(idx, 1);
+      state.extractedTests = state.extractedTests.filter(function(t) { return t._file !== f.name; });
+      renderFileQueue(); toggleGenerate();
     });
+  });
+}
+function ocrFileSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return Math.round(bytes / 1024) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+function handleFiles(fileList) {
+  var errEl = $('#upload-error');
+  var files = Array.prototype.slice.call(fileList || []);
+  var accepted = [];
+  var rejected = [];
+  files.forEach(function(file) {
+    var ext = (file.name.split('.').pop() || '').toLowerCase();
+    if (['png', 'jpg', 'jpeg', 'pdf'].indexOf(ext) === -1) { rejected.push(file.name + ' — unsupported type'); return; }
+    var max = ext === 'pdf' ? 10 * 1048576 : 5 * 1048576;
+    if (file.size > max) { rejected.push(file.name + ' — too large (max ' + (ext === 'pdf' ? '10' : '5') + 'MB)'); return; }
+    accepted.push(file);
+  });
+  if (rejected.length && errEl) { errEl.innerHTML = '<i class="fas fa-triangle-exclamation"></i> ' + rejected.join('<br>'); errEl.style.display = ''; }
+  else if (errEl) errEl.style.display = 'none';
+  accepted.forEach(function(file) {
+    var ext = (file.name.split('.').pop() || '').toLowerCase();
+    var rec = { name: file.name, ext: ext, size: file.size, sizeText: ocrFileSize(file.size), status: 'queued', progress: 0, testCount: null, error: '' };
+    OCR_QUEUE.push(rec);
+    renderFileQueue();
+    processFile(file, rec);
+  });
+  toggleGenerate();
+}
+function processFile(file, rec) {
+  rec.status = 'processing'; renderFileQueue();
+  var fd = new FormData(); fd.append('file', file);
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', '/api/ocr');
+  xhr.withCredentials = true;
+  xhr.upload.addEventListener('progress', function(e) {
+    if (e.lengthComputable) { rec.progress = Math.min(95, Math.round((e.loaded / e.total) * 95)); renderFileQueue(); }
+  });
+  xhr.addEventListener('load', function() {
+    var d = null;
+    try { d = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch (e) { d = null; }
+    if (xhr.status !== 200 || !d || d.status !== 'success') {
+      var detail = (d && d.detail) || ('Server error HTTP ' + xhr.status);
+      rec.status = 'error'; rec.error = ocrFriendlyError(detail, xhr.status);
+      renderFileQueue(); toggleGenerate();
+      return;
+    }
+    var parsed = applyStructuredOCR(d);
+    var tests = parsed.tests;
+    state.extractedOCRMeta = parsed.meta;
+    if (parsed.meta.followUpDate && !state.pendingFollowUpDate) {
+      state.pendingFollowUpDate = parsed.meta.followUpDate;
+      addAudit('followup_scheduled', 'Follow-up scheduled for ' + state.pendingFollowUpDate + ' from OCR follow-up line.');
+    }
+    tests.forEach(function(t) {
+      t._file = file.name;
+      if (!state.extractedTests.find(function(e) { return e.name === t.name && e.value === t.value; })) state.extractedTests.push(t);
+    });
+    var docTypeLabel = parsed.meta.documentType || 'Lab / Report';
+    var html = '<div class="triage-finding-card"><div class="triage-finding-test">' + esc(docTypeLabel) + ' <span class="triage-finding-src">from ' + esc(file.name) + '</span></div></div>';
+    if (parsed.meta.abnormalFlags && parsed.meta.abnormalFlags.length) html += '<div class="triage-finding-card"><div class="triage-finding-test">Abnormal Flags</div><div class="triage-finding-value">' + parsed.meta.abnormalFlags.map(function(f) { return '<span class="triage-flag-pill triage-flag-critical">' + esc(f) + '</span>'; }).join(' ') + '</div></div>';
+    tests.forEach(function(t) { html += '<div class="triage-finding-card"><div class="triage-finding-test">' + esc(t.name) + '</div><div class="triage-finding-value">' + esc(String(t.value)) + ' ' + esc(t.unit) + ' <span class="triage-flag-pill triage-flag-' + esc(t.flag) + '">' + esc(t.flag) + '</span></div></div>'; });
+    if (parsed.meta.summary) html += '<div class="triage-finding-card"><div class="triage-finding-test">AI Summary</div><div class="triage-finding-value" style="white-space:pre-wrap;">' + esc(parsed.meta.summary) + '</div></div>';
+    if (parsed.meta.clinicalInsight) html += '<div class="triage-finding-card"><div class="triage-finding-test">Clinical Insight</div><div class="triage-finding-value" style="white-space:pre-wrap;">' + esc(parsed.meta.clinicalInsight) + '</div></div>';
+    var ex = $('#extracts');
+    if (ex) {
+      if (!ex.dataset.fileIndex) ex.dataset.fileIndex = '0';
+      var fi2 = parseInt(ex.dataset.fileIndex, 10);
+      if (fi2 === 0 && !ex.dataset.init) { ex.innerHTML = ''; ex.dataset.init = '1'; }
+      ex.insertAdjacentHTML('beforeend', html);
+      ex.dataset.fileIndex = String(fi2 + 1);
+    }
+    rec.status = 'done'; rec.progress = 100; rec.testCount = tests.length;
+    addAudit('ocr', 'OCR processed ' + file.name + ' — ' + tests.length + ' findings extracted.');
+    renderFileQueue(); toggleGenerate();
+  });
+  xhr.addEventListener('error', function() {
+    rec.status = 'error'; rec.error = 'Network error during upload.';
+    renderFileQueue(); toggleGenerate();
+  });
+  xhr.send(fd);
+}
+function ocrFriendlyError(raw, status) {
+  var s = String(raw || '');
+  if (status === 502 || status === 504) return 'Server timed out — try again in a moment.';
+  if (status === 413) return 'File too large (max 5MB images, 10MB PDF).';
+  if (status === 400) return 'Could not read document — upload a clear photo or standard PDF.';
+  if (s.indexOf('timeout') >= 0) return 'Analysis timed out — try again in a moment.';
+  return s.slice(0, 90) || 'Upload failed. Please try again.';
 }
 
 /* ---------- Generate triage note ---------- */
@@ -1422,7 +1490,7 @@ function switchTab(name) {
   if (name === 'book-call') { loadDoctors(); loadBookings(); }
 }
 function onFacilityChange(v) { state.facility = v; state.scenario = ($('#scenario') ? $('#scenario').value : ''); populateScenarioSelect(); }
-function resetIntake() { if ($('#symptoms')) $('#symptoms').value = ''; if ($('#anon-code')) $('#anon-code').value = ''; if ($('#consent')) $('#consent').checked = false; if ($('#extracts')) $('#extracts').innerHTML = ''; if ($('#upload-area')) $('#upload-area').style.display = 'none'; state.extractedTests = []; state.note = null; state.session = null; $('#note-result').innerHTML = ''; $('#note-empty').style.display = ''; $('#note-loading').style.display = 'none'; $('#note-result').style.display = 'none'; $('#new-intake-btn').style.display = 'none'; $('#open-queue-btn').style.display = 'none'; toggleGenerate(); }
+function resetIntake() { if ($('#symptoms')) $('#symptoms').value = ''; if ($('#anon-code')) $('#anon-code').value = ''; if ($('#consent')) $('#consent').checked = false; if ($('#extracts')) { $('#extracts').innerHTML = ''; delete $('#extracts').dataset.fileIndex; delete $('#extracts').dataset.init; } if ($('#upload-error')) $('#upload-error').style.display = 'none'; OCR_QUEUE = []; var fq = $('#file-queue'); if (fq) { fq.innerHTML = ''; fq.style.display = 'none'; } state.extractedTests = []; state.extractedOCRMeta = null; state.note = null; state.session = null; $('#note-result').innerHTML = ''; $('#note-empty').style.display = ''; $('#note-loading').style.display = 'none'; $('#note-result').style.display = 'none'; $('#new-intake-btn').style.display = 'none'; $('#open-queue-btn').style.display = 'none'; toggleGenerate(); }
 
 function bindThemeLogout() { /* placeholder — functions defined above */ }
 
