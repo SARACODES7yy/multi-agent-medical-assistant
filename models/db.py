@@ -212,6 +212,12 @@ class Database:
     def update_invoice(self, invoice_id, updates):
         raise NotImplementedError
 
+    def create_ambulance_request(self, request_data):
+        raise NotImplementedError
+
+    def get_ambulance_requests(self, limit=50):
+        raise NotImplementedError
+
 
 class SQLiteDB(Database):
     """SQLite backend (default, zero external dependencies)."""
@@ -416,6 +422,18 @@ class SQLiteDB(Database):
             notes TEXT DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS ambulance_requests (
+            id TEXT PRIMARY KEY,
+            name TEXT DEFAULT '',
+            phone TEXT DEFAULT '',
+            emergency_type TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            latitude REAL,
+            longitude REAL,
+            accuracy REAL,
+            status TEXT NOT NULL DEFAULT 'requested' CHECK(status IN ('requested','dispatched','cancelled')),
+            created_at TEXT NOT NULL
         );
         """)
         conn.commit()
@@ -917,6 +935,29 @@ class SQLiteDB(Database):
         conn.close()
         return self._decode_invoice_row(dict(row)) if row else None
 
+    def create_ambulance_request(self, request_data):
+        rid = str(uuid.uuid4())
+        now = self._now()
+        conn = self._connect()
+        conn.execute(
+            "INSERT INTO ambulance_requests (id,name,phone,emergency_type,notes,latitude,longitude,accuracy,status,created_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (rid, request_data.get("name", ""), request_data.get("phone", ""),
+             request_data.get("emergency_type", ""), request_data.get("notes", ""),
+             request_data.get("latitude"), request_data.get("longitude"),
+             request_data.get("accuracy"), request_data.get("status", "requested"), now))
+        conn.commit()
+        row = conn.execute("SELECT * FROM ambulance_requests WHERE id=?", (rid,)).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def get_ambulance_requests(self, limit=50):
+        conn = self._connect()
+        rows = conn.execute(
+            "SELECT * FROM ambulance_requests ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
 
 class SupabaseDB(Database):
     """Supabase backend (requires SUPABASE_URL + keys in .env)."""
@@ -1053,6 +1094,13 @@ class SupabaseDB(Database):
             THEN CREATE POLICY "invoices_insert" ON invoices FOR INSERT WITH CHECK (true); END IF;
             IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'invoices'::regclass AND polname = 'invoices_update')
             THEN CREATE POLICY "invoices_update" ON invoices FOR UPDATE USING (true); END IF;
+            ALTER TABLE ambulance_requests ENABLE ROW LEVEL SECURITY;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'ambulance_requests'::regclass AND polname = 'ambulance_requests_select')
+            THEN CREATE POLICY "ambulance_requests_select" ON ambulance_requests FOR SELECT USING (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'ambulance_requests'::regclass AND polname = 'ambulance_requests_insert')
+            THEN CREATE POLICY "ambulance_requests_insert" ON ambulance_requests FOR INSERT WITH CHECK (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'ambulance_requests'::regclass AND polname = 'ambulance_requests_update')
+            THEN CREATE POLICY "ambulance_requests_update" ON ambulance_requests FOR UPDATE USING (true); END IF;
         END $$;
         """
 
@@ -1541,6 +1589,27 @@ class SupabaseDB(Database):
         except Exception as e:
             logger.error(f"Supabase update_invoice failed: {e}")
             return None
+
+    def create_ambulance_request(self, request_data):
+        try:
+            row = dict(request_data)
+            row["id"] = str(row.get("id") or uuid.uuid4())
+            row["status"] = row.get("status", "requested")
+            row["created_at"] = row.get("created_at") or self._now()
+            r = self.client.table("ambulance_requests").insert(row).execute()
+            return r.data[0] if r and r.data and len(r.data) > 0 else row
+        except Exception as e:
+            logger.error(f"Supabase create_ambulance_request failed: {e}")
+            return None
+
+    def get_ambulance_requests(self, limit=50):
+        try:
+            r = self.client.table("ambulance_requests").select("*") \
+                .order("created_at", desc=True).limit(limit).execute()
+            return r.data if r and r.data else []
+        except Exception as e:
+            logger.error(f"Supabase get_ambulance_requests failed: {e}")
+            return []
 
 
 def get_db() -> Database:

@@ -187,3 +187,16 @@ CREATE TABLE IF NOT EXISTS invoices (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS ambulance_requests (
+    id TEXT PRIMARY KEY,
+    name TEXT DEFAULT '',
+    phone TEXT DEFAULT '',
+    emergency_type TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    latitude REAL,
+    longitude REAL,
+    accuracy REAL,
+    status TEXT NOT NULL DEFAULT 'requested' CHECK(status IN ('requested','dispatched','cancelled')),
+    created_at TEXT NOT NULL
+);

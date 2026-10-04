@@ -150,6 +150,10 @@ async def lifespan(fastapp: FastAPI):
 
 app = FastAPI(title="Multi-Agent Medical Chatbot", version="2.1", lifespan=lifespan)
 
+# Simple per-IP rate limiter for the public ambulance endpoint (trial mode).
+_AMBULANCE_RATE_LOCK = threading.Lock()
+_AMBULANCE_HITS: Dict[str, list] = {}
+
 # Set up directories
 UPLOAD_FOLDER = "uploads/backend"
 FRONTEND_UPLOAD_FOLDER = "uploads/frontend"
@@ -1804,6 +1808,58 @@ def home_page(request: Request, session_id: Optional[str] = Cookie(None)):
         "name": profile.get("name", ""),
         "email": user["email"],
     })
+
+@app.get("/emergency", response_class=HTMLResponse)
+def emergency_page(request: Request):
+    """Hidden standalone emergency ambulance request page (trial mode).
+
+    No login required — deliberately NOT linked anywhere in the app UI.
+    Only reachable by visiting /emergency directly.
+    """
+    return templates.TemplateResponse(request, "emergency.html", {"request": request})
+
+@app.post("/api/ambulance/request")
+async def create_ambulance_request(request: Request, session_id: Optional[str] = Cookie(None)):
+    """Public (no-auth) ambulance request with live location. Trial only."""
+    ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    with _AMBULANCE_RATE_LOCK:
+        _AMBULANCE_HITS[ip] = [t for t in _AMBULANCE_HITS.get(ip, []) if now - t < 60]
+        if len(_AMBULANCE_HITS[ip]) >= 3:
+            raise HTTPException(status_code=429, detail="Too many requests. Wait a minute and try again.")
+        _AMBULANCE_HITS[ip].append(now)
+    body = await request.json()
+    name = str(body.get("name", "")).strip()[:80]
+    phone = str(body.get("phone", "")).strip()[:20]
+    emergency_type = str(body.get("emergency_type", "")).strip()[:60] or "Emergency"
+    notes = str(body.get("notes", "")).strip()[:200]
+    latitude = body.get("latitude")
+    longitude = body.get("longitude")
+    accuracy = body.get("accuracy")
+    try:
+        latitude = float(latitude) if latitude is not None else None
+        longitude = float(longitude) if longitude is not None else None
+        accuracy = float(accuracy) if accuracy is not None else None
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid location coordinates")
+    if latitude is None or longitude is None:
+        raise HTTPException(status_code=400, detail="Live location is required. Please allow location access.")
+    record = db.create_ambulance_request({
+        "name": name, "phone": phone, "emergency_type": emergency_type, "notes": notes,
+        "latitude": latitude, "longitude": longitude, "accuracy": accuracy,
+        "status": "requested",
+    })
+    if not record:
+        raise HTTPException(status_code=500, detail="Failed to create ambulance request")
+    logger.info("Ambulance request created: id=%s type=%s lat=%.5f lng=%.5f",
+                record.get("id"), emergency_type, latitude, longitude)
+    return {"status": "ok", "request": {
+        "id": record.get("id"),
+        "emergency_type": record.get("emergency_type"),
+        "latitude": record.get("latitude"),
+        "longitude": record.get("longitude"),
+        "created_at": record.get("created_at"),
+    }}
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):

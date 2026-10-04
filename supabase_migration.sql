@@ -308,3 +308,27 @@ DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'invoices'::regclass AND polname = 'invoices_update')
     THEN CREATE POLICY "invoices_update" ON invoices FOR UPDATE USING (true); END IF;
 END $$;
+
+-- Emergency ambulance requests (TRIAL — hidden route /emergency, no login required)
+CREATE TABLE IF NOT EXISTS ambulance_requests (
+    id TEXT PRIMARY KEY,
+    name TEXT DEFAULT '',
+    phone TEXT DEFAULT '',
+    emergency_type TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    latitude REAL,
+    longitude REAL,
+    accuracy REAL,
+    status TEXT NOT NULL DEFAULT 'requested' CHECK(status IN ('requested','dispatched','cancelled')),
+    created_at TEXT NOT NULL
+);
+ALTER TABLE ambulance_requests ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'ambulance_requests'::regclass AND polname = 'ambulance_requests_select')
+    THEN CREATE POLICY "ambulance_requests_select" ON ambulance_requests FOR SELECT USING (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'ambulance_requests'::regclass AND polname = 'ambulance_requests_insert')
+    THEN CREATE POLICY "ambulance_requests_insert" ON ambulance_requests FOR INSERT WITH CHECK (true); END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'ambulance_requests'::regclass AND polname = 'ambulance_requests_update')
+    THEN CREATE POLICY "ambulance_requests_update" ON ambulance_requests FOR UPDATE USING (true); END IF;
+END $$;
