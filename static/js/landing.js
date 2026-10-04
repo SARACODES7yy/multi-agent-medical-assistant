@@ -72,14 +72,14 @@
         }
     }
 
-    /* if already signed in, point the CTAs at the dashboard */
+    /* if already signed in, point the CTAs at the app dashboard */
     fetch('/me', { credentials: 'include' }).then(function (r) {
         if (!r.ok) return;
         var login = $('#nav-login'), cta = $('#nav-cta');
-        if (login) { login.href = '/app'; login.textContent = 'Open assistant'; }
-        if (cta) { cta.href = '/dashboard'; cta.textContent = 'Dashboard'; }
+        if (login) { login.href = '/home'; login.textContent = 'Open assistant'; }
+        if (cta) { cta.href = '/home'; cta.textContent = 'Dashboard'; }
         ['#hero-cta', '#cta-btn'].forEach(function (s) {
-            var b = $(s); if (b) { b.href = '/dashboard'; b.innerHTML = 'Go to dashboard <i class="fas fa-arrow-right"></i>'; }
+            var b = $(s); if (b) { b.href = '/home'; b.innerHTML = 'Go to dashboard <i class="fas fa-arrow-right"></i>'; }
         });
     }).catch(function () {});
 })();

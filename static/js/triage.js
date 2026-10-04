@@ -1046,6 +1046,84 @@ function renderStaffHistory(el) {
 }
 function filterHistoryCodes() { var q = ($('#history-search') ? $('#history-search').value : '').toLowerCase(); $$('#history-codes .triage-history-code').forEach(function(c) { c.style.display = c.textContent.toLowerCase().indexOf(q) === -1 ? 'none' : ''; }); }
 
+/* ---------- Patient records (prescriptions / invoices / checkup) ---------- */
+function rxItemText(it) {
+  it = it || {};
+  var parts = [it.drug || it.name].filter(Boolean);
+  if (it.dose) parts.push(it.dose);
+  if (it.frequency) parts.push(it.frequency);
+  if (it.duration) parts.push('x ' + it.duration);
+  if (it.route) parts.push('(' + it.route + ')');
+  return parts.join(' · ');
+}
+function invoiceStatusBadge(s) { return '<span class="triage-badge triage-badge-' + (s === 'paid' ? 'risk-routine' : 'risk-urgent') + '">' + esc(s === 'paid' ? 'Paid' : s === 'refunded' ? 'Refunded' : (s || 'unpaid')) + '</span>'; }
+function rxStatusBadge(s) { return '<span class="triage-badge triage-badge-' + (s === 'signed' ? 'risk-routine' : 'risk-standard') + '">' + esc((s || 'draft')) + '</span>'; }
+function renderRecords() {
+  var wrap = $('#records-content'); if (!wrap) return;
+  wrap.innerHTML = '<div class="triage-empty"><p>Loading records…</p></div>';
+  var tally = 0;
+  Promise.all([
+    fetch('/api/prescriptions', { credentials: 'include' }).then(function(r) { return r.ok ? r.json() : null; }),
+    fetch('/api/invoices', { credentials: 'include' }).then(function(r) { return r.ok ? r.json() : null; }),
+    fetch('/api/checkup/status', { credentials: 'include' }).then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; })
+  ]).then(function(kit) {
+    var rxs = (kit[0] && kit[0].status === 'ok' && kit[0].prescriptions) ? kit[0].prescriptions : [];
+    var invs = (kit[1] && kit[1].status === 'ok' && kit[1].invoices) ? kit[1].invoices : [];
+    var ck = kit[2] || {};
+    tally = rxs.length + invs.length;
+    var badge = $('#records-badge'); if (badge) { badge.textContent = tally || ''; badge.style.display = tally ? '' : 'none'; }
+    var html = '<div class="triage-records-grid">';
+
+    /* Full-body checkup card */
+    html += '<div class="triage-card"><div class="triage-card-head"><h3><i class="fas fa-heart-pulse me-2 triage-teal"></i>Full Body Checkup</h3><span class="triage-card-sub">Your latest health checkup status.</span></div>';
+    if (ck.has_completed) {
+      html += '<div class="triage-referral-box"><div class="triage-referral-label">Completed</div><p style="margin:4px 0 0;">Your last full-body checkup was completed.' + (ck.pending ? ' A new request is being scheduled.' : '') + '</p></div>';
+    } else if (ck.pending) {
+      html += '<div class="triage-referral-box triage-referral-amber"><div class="triage-referral-label">' + esc((ck.pending.package || 'full_body')).replace(/_/g, ' ') + ' · ' + esc(ck.pending.status || 'requested') + '</div><p style="margin:4px 0 0;">Requested ' + fmtDate(ck.pending.requested_at) + (ck.pending.preferred_date ? ' · preferred ' + esc(ck.pending.preferred_date) : '') + '. Your care team will contact you to schedule it.</p></div>';
+    } else {
+      html += '<div class="triage-empty"><i class="fas fa-calendar-plus"></i><p>No checkup on record. Ask your care team about a full-body checkup.</p></div>';
+    }
+    html += '</div>';
+
+    /* Prescriptions card */
+    html += '<div class="triage-card"><div class="triage-card-head"><h3><i class="fas fa-prescription me-2 triage-violet"></i>Prescriptions</h3><span class="triage-card-sub">Signed and draft prescriptions from reviewers.</span></div>';
+    if (!rxs.length) {
+      html += '<div class="triage-empty"><i class="fas fa-file-medical"></i><p>No prescriptions yet.</p></div>';
+    } else {
+      html += '<div class="triage-records-list">';
+      rxs.forEach(function(rx) {
+        var items = (rx.items || []).filter(function(i) { return (i.drug || i.name); });
+        html += '<div class="triage-history-visit"><div class="triage-history-visit-head"><span class="triage-code">Rx</span> ' + rxStatusBadge(rx.status) + '<span class="triage-muted ms-auto">' + fmtDate(rx.created_at) + '</span></div><div class="triage-history-visit-meta">' + (items.length ? items.map(rxItemText).join('<br>') : esc(rx.advice || 'No items')) + '</div><div class="triage-records-actions"><button class="btn-outline btn-sm" onclick="window.open(\'/api/prescription/' + encodeURIComponent(rx.id) + '/pdf\',\'_blank\')"><i class="fas fa-file-pdf me-1"></i>PDF</button></div></div>';
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+
+    /* Invoices card */
+    html += '<div class="triage-card triage-records-span"><div class="triage-card-head"><h3><i class="fas fa-file-invoice-dollar me-2 triage-amber"></i>Invoices</h3><span class="triage-card-sub">Download your invoices; mark them paid after settling.</span></div>';
+    if (!invs.length) {
+      html += '<div class="triage-empty"><i class="fas fa-receipt"></i><p>No invoices yet.</p></div>';
+    } else {
+      html += '<table class="triage-invoice-table"><tr><th>No</th><th>Date</th><th>Items</th><th>Total</th><th>Status</th><th></th></tr>';
+      invs.forEach(function(inv) {
+        html += '<tr><td>' + esc(inv.invoice_no || inv.id.slice(0, 8)) + '</td><td>' + fmtDate(inv.created_at) + '</td><td>' + esc((inv.items || []).map(function(i) { return i.description; }).filter(Boolean).join(', ') || '—') + '</td><td>' + esc(inv.currency || 'INR') + ' ' + (Number(inv.total) || 0).toFixed(2) + '</td><td>' + invoiceStatusBadge(inv.status) + '</td><td class="triage-invoice-actions">' + (inv.status !== 'paid' && inv.status !== 'refunded' ? '<button class="btn-outline btn-sm" onclick="patientInvoicePaid(\'' + encodeURIComponent(inv.id) + '\')"><i class="fas fa-circle-check me-1"></i>Mark paid</button>' : '') + '<button class="btn-outline btn-sm" onclick="window.open(\'/api/invoice/' + encodeURIComponent(inv.id) + '/pdf\',\'_blank\')"><i class="fas fa-file-pdf me-1"></i>PDF</button></td></tr>';
+      });
+      html += '</table>';
+    }
+    html += '</div></div>';
+    wrap.innerHTML = html;
+  }).catch(function() {
+    wrap.innerHTML = '<div class="triage-empty"><i class="fas fa-exclamation-triangle"></i><p>Could not load records.</p></div>';
+  });
+}
+async function patientInvoicePaid(id) {
+  try {
+    var r = await fetch('/api/invoice/' + encodeURIComponent(id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ status: 'paid' }) });
+    var j = await r.json();
+    if (j.status === 'ok') { showToast('<i class="fas fa-circle-check me-1"></i>Invoice marked paid'); renderRecords(); }
+  } catch (e) {}
+}
+
 /* ---------- Book Call ---------- */
 function getLocalDateStr(d) {
   var y = d.getFullYear();
@@ -1340,6 +1418,7 @@ function switchTab(name) {
   if (name === 'analytics') renderAnalytics();
   if (name === 'audit') renderAudit();
   if (name === 'history') renderHistory();
+  if (name === 'records') renderRecords();
   if (name === 'book-call') { loadDoctors(); loadBookings(); }
 }
 function onFacilityChange(v) { state.facility = v; state.scenario = ($('#scenario') ? $('#scenario').value : ''); populateScenarioSelect(); }

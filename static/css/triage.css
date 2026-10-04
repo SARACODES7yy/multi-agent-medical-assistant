@@ -376,6 +376,12 @@
 .triage-history-visit-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .triage-history-visit-meta { font-size: 11px; color: var(--ink-faint); margin-top: 4px; line-height: 1.5; }
 
+/* ---------- Patient records ---------- */
+.triage-records-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.triage-records-span { grid-column: 1 / -1; }
+.triage-records-list .triage-history-visit { cursor: default; }
+.triage-records-actions { margin-top: 8px; display: flex; gap: 8px; }
+
 /* ---------- About ---------- */
 .triage-about-text { font-size: 13.5px; color: var(--ink-dim); line-height: 1.65; margin-bottom: 8px; }
 .triage-feature-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -426,6 +432,7 @@
     .triage-history-metrics { grid-template-columns: repeat(2, 1fr); }
     .triage-feature-grid, .triage-scenario-grid, .triage-note-grid-2 { grid-template-columns: 1fr; }
     .triage-referral-summary { grid-template-columns: 1fr; }
+    .triage-records-grid { grid-template-columns: 1fr; }
 }
 /* Structured OCR graphical render */
 .triage-doc-type { display:inline-block; font-size:10px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-dim); background:var(--bg-raise2); border:1px solid var(--line); border-radius:99px; padding:3px 10px; }
