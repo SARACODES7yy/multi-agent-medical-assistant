@@ -155,6 +155,18 @@ def create_agent_graph():
                     "image_type": None,
                     "bypass_routing": True  # flag to end flow
                 }
+            # Check for medication requests
+            med_blocked, med_message = guardrails.check_medication_request(check_target)
+            if med_blocked:
+                print(f"Selected agent: MEDICATION GUARDRAIL, Message: ", med_message)
+                return {
+                    **state,
+                    "messages": med_message,
+                    "agent_name": "MEDICATION_GUARDRAIL",
+                    "has_image": False,
+                    "image_type": None,
+                    "bypass_routing": True
+                }
         
         # Original image processing code
         if isinstance(current_input, dict) and "image" in current_input:
@@ -295,10 +307,10 @@ def create_agent_graph():
         - If an image was uploaded, it would have been routed to the medical computer vision agents. Read the history to know about the diagnosis results and continue conversation if user asks anything regarding the diagnosis.
         - After processing, **help the user interpret the results**.
 
-        5. **Uncertainty & Ethical Considerations:**
-        - If unsure, **never assume** medical facts.
-        - Recommend consulting a **licensed healthcare professional** for serious medical concerns.
-        - Avoid providing **medical diagnoses** or **prescriptions**—stick to general knowledge.
+5. **Uncertainty & Ethical Considerations:**
+            - If unsure, **never assume** medical facts.
+            - Recommend consulting a **licensed healthcare professional** for serious medical concerns.
+            - **ABSOLUTE RULE — NO MEDICATIONS:** Never recommend, name, suggest, or prescribe any medication, drug, or treatment. Do NOT say "you should take X" or "X is good for Y condition." Do NOT name specific drugs, even if the user asks directly. Instead: provide general information, suggest seeing a doctor, or offer lifestyle/general wellness info. If a user asks about a specific medication, explain what it's generally used for (educational) but NEVER recommend it for THEM.
 
         ### Response Format:
         - Maintain a **conversational yet professional tone**.
@@ -555,6 +567,12 @@ def create_agent_graph():
         
         # Apply output sanitization
         sanitized_output = guardrails.check_output(output_text, input_text)
+
+        # Filter medication names from output
+        filtered_output = guardrails.filter_medication_output(sanitized_output)
+        if filtered_output != sanitized_output:
+            sanitized_output = filtered_output
+
         # sanitized_output = output_text
         
         # For non-validation cases, add the sanitized output to messages

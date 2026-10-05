@@ -1,12 +1,55 @@
+import json
+import os
+import re
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.messages import HumanMessage, AIMessage
 
+_DRUG_ALIASES = None
+
+def _load_drug_aliases():
+    global _DRUG_ALIASES
+    if _DRUG_ALIASES is not None:
+        return _DRUG_ALIASES
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "drug_interactions.json")
+    _DRUG_ALIASES = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        aliases = data.get("aliases", {})
+        if isinstance(aliases, dict):
+            _DRUG_ALIASES = [a.lower() for a in aliases.keys() if isinstance(a, str) and len(a) > 2]
+        elif isinstance(aliases, list):
+            _DRUG_ALIASES = [a.lower() for a in aliases if isinstance(a, str) and len(a) > 2]
+    except Exception:
+        _DRUG_ALIASES = []
+    return _DRUG_ALIASES
+
+_MEDICATION_REQUEST_PATTERNS = [
+    re.compile(r"\b(what|which|any)\s+(medicine|medication|drug|pills?|tablets?|capsules?|antibiotics?|painkillers?|analgesics?)\b", re.I),
+    re.compile(r"\b(recommend|suggest|prescribe)\s+(me\s+)?(a\s+|any\s+|some\s+)?(medicine|medication|drug|pills?|tablets?|capsules?|antibiotics?|painkillers?|treatment)\b", re.I),
+    re.compile(r"\b(should|can|could)\s+i\s+take\b", re.I),
+    re.compile(r"\bwhat\s+(should|can)\s+i\s+take\b", re.I),
+    re.compile(r"\bbest\s+(medicine|medication|drug|pills?|tablets?|capsules?|antibiotics?|painkillers?)\s+for\b", re.I),
+    re.compile(r"\b(good|effective|works?)\s+(medicine|medication|drug|pills?|tablets?|capsules?)\s+for\b", re.I),
+    re.compile(r"\bhow\s+(much|many)\s+(should|do)\s+i\s+take\b", re.I),
+    re.compile(r"\bdosage\s+(of|for)\b", re.I),
+    re.compile(r"\b(over[\s-]the[\s-]counter|otc)\s+(medicine|medication|drug|pills?|tablets?|capsules?)\b", re.I),
+    re.compile(r"\b(prescription|prescribed)\s+(medicine|medication|drug|pills?|tablets?)\b", re.I),
+]
+
+_MEDICATION_REFUSAL = (
+    "I can't recommend or prescribe specific medications. "
+    "Please consult a licensed healthcare professional for personalized medical advice. "
+    "I can provide general health information or help you understand symptoms, "
+    "but I cannot suggest what you should take."
+)
+
 # LangChain Guardrails
 class LocalGuardrails:
     """Guardrails implementation using purely local components with LangChain."""
-    
+
     def __init__(self, llm):
         """Initialize guardrails with the provided LLM."""
         self.llm = llm
@@ -134,23 +177,64 @@ class LocalGuardrails:
     def check_output(self, output: str, user_input: str = "") -> str:
         """
         Process the model's output through safety filters.
-        
+
         Args:
             output: The raw output from the model
             user_input: The original user query (for context)
-            
+
         Returns:
             Sanitized/modified output
         """
         if not output:
             return output
-            
+
         # Convert AIMessage to string if necessary
         output_text = output if isinstance(output, str) else output.content
-        
+
         result = self.output_guardrail_chain.invoke({
             "output": output_text,
             "user_input": user_input
         })
-        
+
         return result
+
+    def check_medication_request(self, user_input: str) -> tuple[bool, str]:
+        """
+        Check if the user is asking for a medication recommendation.
+
+        Args:
+            user_input: The raw user input text
+
+        Returns:
+            Tuple of (is_blocked, message)
+        """
+        if not user_input:
+            return False, user_input
+        for pattern in _MEDICATION_REQUEST_PATTERNS:
+            if pattern.search(user_input):
+                return True, _MEDICATION_REFUSAL
+        return False, user_input
+
+    def filter_medication_output(self, output: str) -> str:
+        """
+        Scan output for medication names and block if found.
+
+        Args:
+            output: The AI-generated response text
+
+        Returns:
+            Original output if safe, or a refusal message if medications are detected
+        """
+        if not output:
+            return output
+        aliases = _load_drug_aliases()
+        if not aliases:
+            return output
+        text_lower = output.lower()
+        for alias in aliases:
+            if re.search(r'\b' + re.escape(alias) + r'\b', text_lower):
+                return (
+                    "I can't provide specific medication recommendations. "
+                    "Please consult a licensed healthcare professional for personalized advice."
+                )
+        return output
