@@ -674,9 +674,9 @@ class SQLiteDB(Database):
     def get_bookings(self, user_id, role):
         conn = self._connect()
         if role == 'doctor':
-            rows = conn.execute("SELECT cb.*, u.name as patient_name, u.email as patient_email FROM call_bookings cb LEFT JOIN users u ON u.id=cb.patient_id WHERE cb.doctor_id=? ORDER BY cb.scheduled_at DESC", (user_id,)).fetchall()
+            rows = conn.execute("SELECT cb.*, p.name as patient_name, u.email as patient_email FROM call_bookings cb LEFT JOIN users u ON u.id=cb.patient_id LEFT JOIN profiles p ON p.user_id=cb.patient_id WHERE cb.doctor_id=? ORDER BY cb.scheduled_at DESC", (user_id,)).fetchall()
         else:
-            rows = conn.execute("SELECT cb.*, u.name as doctor_name, u.email as doctor_email FROM call_bookings cb LEFT JOIN users u ON u.id=cb.doctor_id WHERE cb.patient_id=? ORDER BY cb.scheduled_at DESC", (user_id,)).fetchall()
+            rows = conn.execute("SELECT cb.*, p.name as doctor_name, u.email as doctor_email FROM call_bookings cb LEFT JOIN users u ON u.id=cb.doctor_id LEFT JOIN profiles p ON p.user_id=cb.doctor_id WHERE cb.patient_id=? ORDER BY cb.scheduled_at DESC", (user_id,)).fetchall()
         conn.close()
         return [dict(r) for r in rows]
 

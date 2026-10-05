@@ -10,6 +10,8 @@ function hideEl(id) { var e = document.getElementById(id); if (e) e.style.displa
 function fmtDate(iso) { if (!iso) return '—'; var d = new Date(iso); return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); }
 function timeAgo(iso) { if (!iso) return ''; var s = Math.max(0, Date.now() - new Date(iso).getTime()); var m = Math.floor(s / 60000); if (m < 1) return 'just now'; if (m < 60) return m + 'm ago'; var h = Math.floor(m / 60); if (h < 24) return h + 'h ago'; var dd = Math.floor(h / 24); return dd + 'd ago'; }
 function uuid() { return 'xxxx-xxxx-xxxx'.replace(/x/g, function() { return (Math.random() * 16 | 0).toString(16); }); }
+/* i18n alias — falls back to returning the key if i18n.js is unavailable */
+var t = (typeof window.t === 'function') ? window.t : function(k) { return k; };
 
 /* ---------- LocalStorage helpers ---------- */
 function SK() { return 'triage.sessions.' + (state.role || 'patient'); }
@@ -112,6 +114,8 @@ function init() {
   state.isStaff = ['doctor', 'nurse'].indexOf(state.role) >= 0;
   populateFacilitySelect();
   populateLangSelect();
+  if (typeof populateUiLangSelect === 'function') populateUiLangSelect($('#ui-lang'));
+  if (typeof applyI18n === 'function') applyI18n();
   fetch('/api/speech-config', { credentials: 'include' })
     .then(function(r) { return r.ok ? r.json() : null; })
     .catch(function() { return null; })
@@ -139,6 +143,49 @@ function populateFacilitySelect() {
   populateScenarioSelect();
 }
 
+/* ---------- Scenario workflows (suggested questions + guidance) ---------- */
+var SCENARIO_WORKFLOW = {
+  opd:        { ask: ['When did symptoms start?', 'Any chest pain or breathlessness?', 'Current medications?'], guide: 'Triage OPD arrivals by red-flag symptoms first; book diagnostics before consultation when red flags are absent.' },
+  fever:      { ask: ['Fever for how many days?', 'Any rash or bleeding gums?', 'Recent travel or mosquito exposure?'], guide: 'Check dengue warning signs (belly pain, bleeding, persistent vomiting). Escalate immediately on any warning sign.' },
+  maternal:   { ask: ['Gestational age?', 'Fetal movements normal?', 'Any bleeding or leaking?'], guide: 'Any bleeding, severe headache, blurred vision or reduced fetal movement → emergency referral this visit.' },
+  chronic:    { ask: ['Last BP / HbA1c reading?', 'Adherence to current drugs?', 'New symptoms since last visit?'], guide: 'Focus on adherence and control metrics; flag missing labs as missing-info before closing the note.' },
+  routine:    { ask: ['Main complaint today?', 'Duration of symptoms?', 'Any fever or weight loss?'], guide: 'Standard OPD flow — record complaint, vitals, then decide self-care, pharmacy or labs.' },
+  immunization:{ ask: ['Child age and last vaccine date?', 'Any fever today?', 'Allergy to any vaccine?'], guide: 'Follow the national schedule; screen for contraindications (high fever, severe allergy) before administering.' },
+  referral:   { ask: ['Why is higher-centre care needed?', 'Vitals stable for transit?', 'Records and medicines packed?'], guide: 'Complete the referral checklist, record transit precautions, and send the referral note with the patient.' },
+  hearing:    { ask: ['Noise exposure history?', 'Any ringing or hearing loss?', 'Ear discharge or pain?'], guide: 'Occupational screening — log exposure duration and recommend audiometry when symptomatic.' },
+  mobility:   { ask: ['How did the injury happen?', 'Can the worker bear weight?', 'Numbness or deformity?'], guide: 'Rule out fracture/nerve injury before clearance; document site, mechanism and work restriction.' },
+  roster:     { ask: ['Shift pattern this week?', 'Excessive sleepiness?', 'Any chest pain or palpitations?'], guide: 'Night-shift triage — screen for fatigue risk and hypertension; advise work-hour limits when symptomatic.' },
+  fever_camp: { ask: ['Fever days and max temperature?', 'Rash or joint pain?', 'Vomiting or bleeding?'], guide: 'Camp flow — rapid risk stratification, test suspects, refer warning-sign cases the same day.' },
+  hostel:     { ask: ['Symptoms in room-mates?', 'Fever or sore throat?', 'Appetite and sleep ok?'], guide: 'Watch for clustered respiratory/GI illness; isolate and inform the campus health officer if clustering.' },
+  mental:     { ask: ['Mood and sleep over 2 weeks?', 'Any self-harm thoughts?', 'Support system at home?'], guide: 'Non-judgemental screening; any self-harm ideation → immediate supervisor referral and safety plan.' },
+  followup:   { ask: ['Any new symptoms since last visit?', 'Medicines taken regularly?', 'Side effects reported?'], guide: 'Review control of the chronic condition; adjust only via the qualified reviewer, never here.' },
+  screening:  { ask: ['Any current symptoms?', 'Last screening date?', 'Family history of note?'], guide: 'Camp screening — capture vitals and key history; list abnormal results as missing-info requiring lab confirmation.' },
+  eye:        { ask: ['Blurred vision since when?', 'Eye pain or flashes?', 'Diabetes or known eye disease?'], guide: 'Sudden vision loss or pain is emergency — same-day ophthalmology referral.' }
+};
+function renderScenarioBanner() {
+  var banner = $('#scenario-banner'); if (!banner) return;
+  var key = state.scenario;
+  var wf = SCENARIO_WORKFLOW[key];
+  var labels = {}; (SCENARIO_LABELS[state.facility] || []).forEach(function(p) { labels[p[0]] = p[1]; });
+  var nameEl = $('#scenario-banner-name');
+  if (nameEl) nameEl.textContent = labels[key] || key || '';
+  var chips = $('#scenario-ask-chips'); var guide = $('#scenario-guide-text');
+  if (!wf) { banner.style.display = 'none'; return; }
+  banner.style.display = '';
+  if (chips) {
+    chips.innerHTML = wf.ask.map(function(q) { return '<button type="button" class="triage-chip" data-q="' + esc(q) + '"><i class="fas fa-plus me-1"></i>' + esc(q) + '</button>'; }).join('');
+    chips.querySelectorAll('.triage-chip').forEach(function(c) {
+      c.addEventListener('click', function() {
+        var q = c.getAttribute('data-q') || '';
+        var ta = $('#symptoms');
+        if (ta) { ta.value = (ta.value ? ta.value.replace(/\s+$/, '') + ' ' : '') + q; toggleGenerate(); ta.focus(); }
+      });
+    });
+  }
+  if (guide) guide.textContent = wf.guide;
+  if (typeof applyI18n === 'function') applyI18n();
+}
+
 function populateScenarioSelect() {
   var sel = $('#scenario'); if (!sel) return;
   var key = $('#facility-type').value || state.facility;
@@ -148,6 +195,8 @@ function populateScenarioSelect() {
   list.forEach(function(p) { var o = document.createElement('option'); o.value = p[0]; o.textContent = p[1]; sel.appendChild(o); });
   sel.value = state.scenario || list[0][0];
   state.scenario = sel.value;
+  sel.onchange = function() { state.scenario = sel.value; renderScenarioBanner(); };
+  renderScenarioBanner();
 }
 
 function populateLangSelect() {
@@ -683,12 +732,50 @@ function applyNote(note) {
 function renderNote() {
   var note = state.note; if (!note) return;
   var rm = RISK_META[note.risk];
+  var missing = note.missing_info || [];
+  var followups = note.followup_questions || [];
   var html = '<div class="triage-risk-banner triage-risk-banner-' + note.risk + '"><div class="triage-risk-banner-head"><div class="triage-risk-ident"><span class="triage-risk-dot triage-risk-dot-' + note.risk + '"></span><div><div class="triage-risk-label triage-risk-label-' + note.risk + '">' + esc(rm.label) + '</div><div class="triage-risk-priority">Priority based on intake signals · advisory only</div></div></div><div class="triage-risk-score"><div class="triage-risk-score-num">' + note.score + '</div><div class="triage-risk-score-label">Risk score</div></div></div><div class="triage-risk-rationale">' + esc(note.rationale || rm.label + ' · non-diagnostic advisory') + '</div></div>';
-  html += '<div class="triage-note-grid-2"><div><div class="triage-note-section"><h4><i class="fas fa-file-medical"></i> Chief Complaints</h4><ul>' + (note.chief_complaints || []).map(function(c) { return '<li><span class="triage-num">•</span>' + esc(c) + '</li>'; }).join('') + '</ul></div><div class="triage-note-section"><h4><i class="fas fa-clock"></i> Timeline</h4><p>' + esc(note.timeline || '—') + '</p></div></div><div><div class="triage-note-section"><h4><i class="fas fa-glass"></i> Expected Findings</h4><p>' + esc(note.expected_findings || '—') + '</p></div><div class="triage-note-section"><h4><i class="fas fa-exclamation-triangle triage-redflag"></i> Red Flags</h4>' + (note.red_flags && note.red_flags.length ? '<ul>' + note.red_flags.map(function(f) { return '<li><span class="triage-num">•</span> <span class="triage-redflag">' + esc(f) + '</span></li>'; }).join('') + '</ul>' : '<p>No urgent signals detected.</p>') + '</div></div></div>';
-  html += '<div class="triage-note-grid-2"><div><div class="triage-note-section"><h4><i class="fas fa-question-circle"></i> Missing Info</h4><ul>' + (note.missing_info || []).map(function(m) { return '<li><span class="triage-num">•</span><span class="triage-missing">' + esc(m) + '</span></li>'; }).join('') + '</ul></div><div class="triage-note-section"><h4><i class="fas fa-comments"></i> Follow-up Questions</h4>' + (note.followup_questions || []).map(function(q) { return '<span class="triage-chip">' + esc(q) + '</span>'; }).join('') + '</div></div>';
-  if (note.tests && note.tests.length) { html += '<div class="triage-note-section"><h4><i class="fas fa-vial"></i> Extracted / Expected Findings</h4><div class="triage-finding-grid">'; note.tests.forEach(function(t) { html += '<div class="triage-finding-card"><div class="triage-finding-test">' + esc(t.name) + '</div><div class="triage-finding-value">' + esc(String(t.value)) + ' <span class="triage-flag-pill triage-flag-' + (t.flag || 'unknown') + '">' + esc(t.flag || 'unknown') + '</span></div></div>'; }); html += '</div></div>'; }
-  html += (note.fallback === 'rule-fallback' ? '<p class="triage-hint" style="color:var(--amber);"><i class="fas fa-triangle-exclamation me-1"></i>Offline (rule-based) draft — the AI service is unavailable. Reviewer must verify.</p>' : '') + '</div>';
+  html += '<div class="triage-queue-title" style="margin:2px 0 8px;">';
+  if (missing.length) html += '<span class="triage-badge triage-badge-missing"><i class="fas fa-circle-question me-1"></i>' + esc(t('queue.missing')) + ' · ' + missing.length + '</span> ';
+  if (followups.length) html += '<span class="triage-badge triage-badge-followup"><i class="fas fa-comments me-1"></i>' + esc(t('queue.followups')) + ' · ' + followups.length + '</span>';
+  html += '</div>';
+  html += '<div class="triage-note-grid-2"><div><div class="triage-note-section"><h4><i class="fas fa-file-medical"></i> ' + esc(t('note.chief')) + '</h4><ul>' + (note.chief_complaints || []).map(function(c) { return '<li><span class="triage-num">•</span>' + esc(c) + '</li>'; }).join('') + '</ul></div><div class="triage-note-section"><h4><i class="fas fa-clock"></i> ' + esc(t('note.timeline')) + '</h4><p>' + esc(note.timeline || '—') + '</p></div></div><div><div class="triage-note-section"><h4><i class="fas fa-glass"></i> ' + esc(t('note.findings')) + '</h4><p>' + esc(note.expected_findings || '—') + '</p></div><div class="triage-note-section"><h4><i class="fas fa-exclamation-triangle triage-redflag"></i> ' + esc(t('note.redFlags')) + '</h4>' + (note.red_flags && note.red_flags.length ? '<ul>' + note.red_flags.map(function(f) { return '<li><span class="triage-num">•</span> <span class="triage-redflag">' + esc(f) + '</span></li>'; }).join('') + '</ul>' : '<p>' + esc(t('note.noUrgent')) + '</p>') + '</div></div></div>';
+  html += '<div class="triage-note-grid-2"><div><div class="triage-note-section"><h4><i class="fas fa-question-circle"></i> ' + esc(t('note.missing')) + (missing.length ? ' <span class="triage-badge triage-badge-missing">' + missing.length + '</span>' : '') + '</h4>' + (missing.length ? '<ul class="triage-question-list">' + missing.map(function(m) { return '<li class="triage-q-missing"><i class="fas fa-circle-exclamation"></i><span>' + esc(m) + '</span></li>'; }).join('') + '</ul>' : '<p>None flagged — intake looks complete.</p>') + '</div><div class="triage-note-section"><h4><i class="fas fa-comments"></i> ' + esc(t('note.followup')) + (followups.length ? ' <span class="triage-badge triage-badge-followup">' + followups.length + '</span>' : '') + '</h4>' + (followups.length ? '<ul class="triage-question-list">' + followups.map(function(q, qi) { return '<li data-qidx="' + qi + '"><i class="fas fa-circle-question"></i><label class="triage-question-check-wrap" style="display:flex;gap:7px;align-items:flex-start;flex:1;"><input type="checkbox" class="triage-question-check"><span>' + esc(q) + '</span></label></li>'; }).join('') + '</ul>' : '<p>No follow-up questions queued.</p>') + '</div></div>';
+  if (note.tests && note.tests.length) { html += '<div class="triage-note-section"><h4><i class="fas fa-vial"></i> ' + esc(t('note.extracted')) + '</h4><div class="triage-finding-grid">'; note.tests.forEach(function(t2) { html += '<div class="triage-finding-card"><div class="triage-finding-test">' + esc(t2.name) + '</div><div class="triage-finding-value">' + esc(String(t2.value)) + ' <span class="triage-flag-pill triage-flag-' + (t2.flag || 'unknown') + '">' + esc(t2.flag || 'unknown') + '</span></div></div>'; }); html += '</div></div>'; }
+  html += (note.fallback === 'rule-fallback' ? '<p class="triage-hint" style="color:var(--amber);"><i class="fas fa-triangle-exclamation me-1"></i>Offline (rule-based) draft — the AI service is unavailable. Reviewer must verify.</p>' : '') + '<div id="note-translated" style="display:none;"></div></div>';
   $('#note-empty').style.display = 'none'; $('#note-loading').style.display = 'none'; $('#note-result').style.display = ''; $('#note-result').innerHTML = html;
+  var tb = $('#note-translate-btn'); if (tb) tb.style.display = '';
+  $('#note-result').querySelectorAll('.triage-question-check').forEach(function(cb) {
+    cb.addEventListener('change', function() { cb.closest('li').classList.toggle('triage-question-done', cb.checked); });
+  });
+}
+function notePlainText(note) {
+  var lines = ['RISK: ' + ((RISK_META[note.risk] || {}).label || note.risk) + ' (score ' + (note.score || 0) + '/100)'];
+  if (note.summary) lines.push('SUMMARY: ' + note.summary);
+  if ((note.chief_complaints || []).length) lines.push('CHIEF COMPLAINTS: ' + note.chief_complaints.join('; '));
+  if (note.timeline) lines.push('TIMELINE: ' + note.timeline);
+  if (note.expected_findings) lines.push('EXPECTED FINDINGS: ' + note.expected_findings);
+  if ((note.red_flags || []).length) lines.push('RED FLAGS: ' + note.red_flags.join('; '));
+  if ((note.missing_info || []).length) lines.push('MISSING INFO: ' + note.missing_info.join('; '));
+  if ((note.followup_questions || []).length) lines.push('FOLLOW-UP QUESTIONS: ' + note.followup_questions.join('; '));
+  return lines.join('\n');
+}
+function translateNote() {
+  var note = state.note; if (!note) return;
+  var box = $('#note-translated'); if (!box) return;
+  if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+  var target = (typeof currentLang === 'function') ? currentLang() : 'en';
+  if (target === 'en') { target = 'hi'; }
+  box.style.display = ''; box.innerHTML = '<div class="triage-referral-box triage-referral-amber"><div class="triage-referral-label"><span data-i18n="note.translating">' + esc(t('note.translating')) + '</span></div></div>';
+  translateText(notePlainText(note), target).then(function(out) {
+    if (out === notePlainText(note)) {
+      box.innerHTML = '<div class="triage-referral-box"><div class="triage-referral-label">' + esc(t('note.translateFail')) + '</div></div>';
+    } else {
+      box.innerHTML = '<div class="triage-referral-box"><div class="triage-referral-label">' + esc(t('chat.translatedTo') + ' ' + (typeof targetLangName === 'function' ? targetLangName(target) : target)) + '</div><pre style="margin-top:6px;white-space:pre-wrap;">' + esc(out) + '</pre></div>';
+    }
+  }).catch(function() {
+    box.innerHTML = '<div class="triage-referral-box"><div class="triage-referral-label">' + esc(t('note.translateFail')) + '</div></div>';
+  });
 }
 
 /* ---------- Session persistence ---------- */
@@ -785,11 +872,52 @@ function showToast(html, sticky) {
   wrap.appendChild(t);
   setTimeout(function() { if (t.parentNode) t.remove(); }, sticky ? 20000 : 6000);
 }
+/* ---------- Queue prioritization (pinned order + drag/arrows) ---------- */
+function pinnedKey() { return 'triage.pinned.' + (state.role || 'patient'); }
+function getPinned() { var v = lsGet(pinnedKey(), []); return Array.isArray(v) ? v : []; }
+function setPinned(arr) { lsSet(pinnedKey(), arr); }
+/* First manual reorder snapshots the current displayed order into pins,
+   so drag/arrows behave exactly like reordering the visible list. */
+function ensurePinOrder() {
+  var visible = state._visibleCodes || [];
+  var p = getPinned().filter(function(c) { return visible.indexOf(c) >= 0; });
+  var seen = {}; p.forEach(function(c) { seen[c] = 1; });
+  visible.forEach(function(c) { if (!seen[c]) { seen[c] = 1; p.push(c); } });
+  return p;
+}
+function pinBefore(code, targetCode) {
+  var p = ensurePinOrder().filter(function(c) { return c !== code; });
+  var idx = targetCode ? p.indexOf(targetCode) : -1;
+  if (idx >= 0) p.splice(idx, 0, code); else p.unshift(code);
+  setPinned(p);
+  addAudit('queue_prioritize', 'Session ' + code + ' dragged to priority position.');
+  renderQueue();
+}
+function moveQueueItem(code, dir) {
+  var visible = state._visibleCodes || [];
+  var i = visible.indexOf(code); if (i < 0) return;
+  var j = dir === 'up' ? i - 1 : i + 1;
+  if (j < 0 || j >= visible.length) return;
+  var p = ensurePinOrder();
+  var pi = p.indexOf(code); var pj = p.indexOf(visible[j]);
+  if (pi < 0 || pj < 0) return;
+  p.splice(pi, 1);
+  p.splice(pj, 0, code);
+  setPinned(p);
+  addAudit('queue_prioritize', 'Session ' + code + ' moved ' + dir + ' (manual priority).');
+  renderQueue();
+}
+function clearPinnedQueue() {
+  setPinned([]);
+  addAudit('queue_prioritize', 'Cleared manual priority pins.');
+  renderQueue();
+}
+
 function mergedQueue() {
   var items = []; var seen = {};
   state.queueSessions.forEach(function(s) {
     if (!s.id || seen[s.id]) return; seen[s.id] = true;
-    items.push({ id: s.id, code: s.anonym_code || s.id.slice(0, 8), createdAt: s.created_at || s.createdAt || '', risk: s.risk || 'standard', score: s.score || 0, status: s.status || 'requested', src: 'server', type: 'triage', patient_id: s.user_id || null, patientName: s.patient_name || '', narrative: s.narrative || '', facility: s.facility || '', scenario: s.scenario || '', facilityName: s.facility_name || '', summary: s.summary || '', timeline: s.timeline || '', chiefComplaints: parseList(s.chief_complaints), redFlags: parseList(s.red_flags), missingInfo: parseList(s.missing_info), followupQuestions: parseList(s.followup_questions), tests: parseList(s.tests), followUpDate: s.follow_up_date || null, labFlags: s.lab_flags || [], labSeverity: s.lab_severity || 0 });
+    items.push({ id: s.id, code: s.anonym_code || s.id.slice(0, 8), createdAt: s.created_at || s.createdAt || '', risk: s.risk || 'standard', score: s.score || 0, status: s.status || 'requested', src: 'server', type: 'triage', patient_id: s.user_id || null, patientName: s.patient_name || '', narrative: s.narrative || '', facility: s.facility || '', scenario: s.scenario || '', facilityName: s.facility_name || '', ageBand: s.age_band || '', sex: s.sex || '', summary: s.summary || '', timeline: s.timeline || '', chiefComplaints: parseList(s.chief_complaints), redFlags: parseList(s.red_flags), missingInfo: parseList(s.missing_info), followupQuestions: parseList(s.followup_questions), tests: parseList(s.tests), followUpDate: s.follow_up_date || null, labFlags: s.lab_flags || [], labSeverity: s.lab_severity || 0 });
   });
   state.queueServer.forEach(function(c) {
     if (!c.id || seen[c.id]) return; seen[c.id] = true;
@@ -802,6 +930,15 @@ function mergedQueue() {
   });
   if (state.seedLoaded) addAudit('queue_seed', 'Demo cases present in queue (' + local.filter(function(s) { return s.src === 'local'; }).length + ' local).');
   items.sort(function(a, b) { var wa = RISK_META[a.risk] ? RISK_META[a.risk].order : 2; var wb = RISK_META[b.risk] ? RISK_META[b.risk].order : 2; if (wa !== wb) return wa - wb; return new Date(b.createdAt) - new Date(a.createdAt); });
+  /* Manual priority: pinned codes first, in pinned order (risk order for the rest). */
+  var pins = getPinned();
+  if (pins.length) {
+    var byCode = {}; items.forEach(function(it) { if (it.code) byCode[it.code] = it; });
+    var top = [], rest = [];
+    pins.forEach(function(c) { if (byCode[c] && top.indexOf(byCode[c]) < 0) top.push(byCode[c]); });
+    items.forEach(function(it) { if (top.indexOf(it) === -1) rest.push(it); });
+    items = top.concat(rest);
+  }
   return items;
 }
 function riskWeight(r) { return RISK_META[r] ? RISK_META[r].weight : 0; }
@@ -812,8 +949,16 @@ function renderQueue() {
   var fStatus = ($('#filter-status') ? $('#filter-status').value : '');
   var fRisk = ($('#filter-risk') ? $('#filter-risk').value : '');
   var items = mergedQueue().filter(function(i) { if (fStatus && i.status !== fStatus) return false; if (fRisk && i.risk !== fRisk) return false; return true; });
+  state._visibleCodes = items.map(function(i) { return i.code; });
+  var pins = getPinned();
+  var pinbar = $('#queue-pinbar');
+  if (pinbar) {
+    var active = pins.filter(function(c) { return state._visibleCodes.indexOf(c) >= 0; }).length;
+    pinbar.style.display = active > 1 ? '' : 'none';
+    var pc = $('#queue-pincount'); if (pc) pc.textContent = active;
+  }
   var countEl = $('#queue-count'); if (countEl) countEl.textContent = items.length + ' session' + (items.length !== 1 ? 's' : '');
-  if (!items.length) { list.innerHTML = '<div class="triage-empty"><i class="fas fa-inbox"></i><p>No sessions match the current filter.</p></div>'; return; }
+  if (!items.length) { list.innerHTML = '<div class="triage-empty"><i class="fas fa-inbox"></i><p>' + esc(t('queue.empty')) + '</p></div>'; return; }
   var html = '';
   items.forEach(function(item) {
     var rw = riskWeight(item.risk); var rm = RISK_META[item.risk]; var sm = STATUS_META[item.status] || STATUS_META.requested;
@@ -821,20 +966,77 @@ function renderQueue() {
     var labBadge = '';
     if (item.labSeverity >= 2) labBadge = '<span class="triage-badge triage-lab-critical"><i class="fas fa-vial-circle-check me-1"></i>Critical lab</span>';
     else if (item.labSeverity === 1) labBadge = '<span class="triage-badge triage-lab-abnormal"><i class="fas fa-vial me-1"></i>Abnormal lab</span>';
-    html += '<div class="triage-queue-row triage-queue-row-risk-' + item.risk + '"><button class="triage-queue-row-head" data-code="' + esc(item.code) + '"><span class="triage-queue-dot" style="background:' + rm.color + '"></span><div class="triage-queue-main"><div class="triage-queue-title"><span class="triage-code">' + esc(item.code) + '</span> <span class="triage-badge triage-badge-risk-' + item.risk + '">' + esc(rm.label) + '</span> <span class="triage-badge triage-badge-status">' + esc(sm.label) + '</span>' + labBadge + fuHtml + (item.patientName ? '<span class="triage-badge">Patient</span>' : '') + '</div><div class="triage-queue-meta">' + fmtDate(item.createdAt) + ' · ' + esc(item.package || item.scenario || item.facility || '—') + ' · ' + esc(item.narrative || '').slice(0, 60) + '</div></div><span class="triage-queue-score" style="color:' + rm.color + '">' + item.score + '</span></button>' + (state.isStaff && state.batchBar ? '<label class="triage-queue-cb-wrap" title="Select for batch validation"><input type="checkbox" class="triage-queue-cb" data-code="' + esc(item.code) + '"' + (state.batchSelected[item.code] ? ' checked' : '') + '></label>' : '') + '</div>';
+    var missN = (item.missingInfo || []).length, fuN = (item.followupQuestions || []).length;
+    var missBadge = missN ? '<span class="triage-badge triage-badge-missing" title="Missing information"><i class="fas fa-circle-question me-1"></i>' + missN + ' missing</span>' : '';
+    var fuBadge = fuN ? '<span class="triage-badge triage-badge-followup" title="Follow-up questions"><i class="fas fa-comments me-1"></i>' + fuN + ' follow-ups</span>' : '';
+    var isPinned = pins.indexOf(item.code) >= 0;
+    html += '<div class="triage-queue-row triage-queue-row-risk-' + item.risk + '" draggable="true" data-code="' + esc(item.code) + '" title="Drag to reprioritize">'
+      + '<div class="triage-queue-prio"><button class="triage-prio-btn" data-act="up" data-code="' + esc(item.code) + '" title="' + esc(t('queue.moveUp')) + '"><i class="fas fa-chevron-up"></i></button>'
+      + '<button class="triage-prio-btn" data-act="down" data-code="' + esc(item.code) + '" title="' + esc(t('queue.moveDown')) + '"><i class="fas fa-chevron-down"></i></button></div>'
+      + '<button class="triage-pin-btn' + (isPinned ? ' is-active' : '') + '" data-pin="' + esc(item.code) + '" title="' + (isPinned ? esc(t('queue.clearPin')) : esc(t('queue.moveTop'))) + '"><i class="fas fa-thumbtack"></i></button>'
+      + '<button class="triage-queue-row-head" data-code="' + esc(item.code) + '"><span class="triage-queue-dot" style="background:' + rm.color + '"></span><div class="triage-queue-main"><div class="triage-queue-title"><span class="triage-code">' + esc(item.code) + '</span> <span class="triage-badge triage-badge-risk-' + item.risk + '">' + esc(rm.label) + '</span> <span class="triage-badge triage-badge-status">' + esc(sm.label) + '</span>' + missBadge + fuBadge + labBadge + fuHtml + (item.patientName ? '<span class="triage-badge">Patient</span>' : '') + '</div><div class="triage-queue-meta">' + fmtDate(item.createdAt) + ' · ' + esc(item.package || item.scenario || item.facility || '—') + ' · ' + esc(item.narrative || '').slice(0, 60) + '</div></div><span class="triage-queue-score" style="color:' + rm.color + '">' + item.score + '</span></button>'
+      + (state.isStaff && state.batchBar ? '<label class="triage-queue-cb-wrap" title="Select for batch validation"><input type="checkbox" class="triage-queue-cb" data-code="' + esc(item.code) + '"' + (state.batchSelected[item.code] ? ' checked' : '') + '></label>' : '') + '</div>';
   });
   list.innerHTML = html;
   list.querySelectorAll('.triage-queue-row-head').forEach(function(btn) { btn.addEventListener('click', function() { var code = btn.getAttribute('data-code'); var item = mergedQueue().find(function(i) { return i.code === code; }); if (item) expandQueueItem(item); }); });
   list.querySelectorAll('.triage-queue-cb').forEach(function(cb) { cb.addEventListener('change', function() { var code = cb.getAttribute('data-code'); if (cb.checked) state.batchSelected[code] = true; else delete state.batchSelected[code]; updateBatchBar(); }); });
+  list.querySelectorAll('.triage-prio-btn').forEach(function(btn) {
+    btn.addEventListener('click', function(e) { e.stopPropagation(); moveQueueItem(btn.getAttribute('data-code'), btn.getAttribute('data-act')); });
+  });
+  list.querySelectorAll('.triage-pin-btn').forEach(function(btn) {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var code = btn.getAttribute('data-pin');
+      var p = getPinned();
+      if (p.indexOf(code) >= 0) setPinned(p.filter(function(c) { return c !== code; }));
+      else setPinned([code].concat(p.filter(function(c) { return c !== code; })));
+      renderQueue();
+    });
+  });
+  /* Drag & drop reprioritization */
+  var dragCode = null;
+  list.querySelectorAll('.triage-queue-row').forEach(function(row) {
+    row.addEventListener('dragstart', function(e) { dragCode = row.getAttribute('data-code'); row.classList.add('is-dragging'); try { e.dataTransfer.setData('text/plain', dragCode); e.dataTransfer.effectAllowed = 'move'; } catch (err) {} });
+    row.addEventListener('dragend', function() { dragCode = null; row.classList.remove('is-dragging'); list.querySelectorAll('.is-dropbefore').forEach(function(r) { r.classList.remove('is-dropbefore'); }); });
+    row.addEventListener('dragover', function(e) { if (!dragCode) return; e.preventDefault(); row.classList.add('is-dropbefore'); });
+    row.addEventListener('dragleave', function() { row.classList.remove('is-dropbefore'); });
+    row.addEventListener('drop', function(e) {
+      e.preventDefault(); row.classList.remove('is-dropbefore');
+      var code = dragCode || (e.dataTransfer && e.dataTransfer.getData('text/plain'));
+      var target = row.getAttribute('data-code');
+      if (code && target && code !== target) pinBefore(code, target);
+    });
+  });
   updateBatchBar();
 }
 
 var expandedItem = null;
-function expandQueueItem(item) { expandedItem = item; var rm = RISK_META[item.risk]; var sm = STATUS_META[item.status] || STATUS_META.requested; var _sum = item.summary || (state.note ? state.note.summary : ''); var html = '<div class="triage-note-section"><h4><i class="fas fa-file-medical"></i> Structured Triage Note</h4><p>' + (_sum ? esc(_sum) : '<em>No note generated for this item.</em>') + '</p></div>';
-  html += '<div class="triage-note-section"><h4><i class="fas fa-history"></i> Timeline</h4><p>' + fmtDate(item.createdAt) + ' · Created via ' + item.src + ' session.</p>' + (item.timeline ? '<p>' + esc(item.timeline) + '</p>' : '') + '</div>';
+function buildItemTimeline(item) {
+  var evts = [{ icon: 'fa-clipboard-list', when: item.createdAt, title: 'Intake created', text: (item.narrative || '').slice(0, 140), risk: item.risk }];
+  if (item.timeline) evts.push({ icon: 'fa-clock', when: item.createdAt, title: 'Symptom timeline', text: item.timeline, risk: item.risk });
+  if ((item.tests || []).length) evts.push({ icon: 'fa-vial', when: item.createdAt, title: 'Lab / OCR findings', text: item.tests.map(function(t2) { return t2.name + ' ' + t2.value + (t2.unit ? ' ' + t2.unit : ''); }).join(' · ').slice(0, 160), risk: 'standard' });
+  if (item.followUpDate) evts.push({ icon: 'fa-calendar-check', when: item.followUpDate, title: 'Follow-up due', text: 'Scheduled follow-up date for this session.', risk: 'routine' });
+  if (item.status && item.status !== 'requested') evts.push({ icon: 'fa-eye', when: item.createdAt, title: 'Status: ' + item.status, text: 'Current review status of this session.', risk: item.risk });
+  evts.sort(function(a, b) { return new Date(a.when || 0) - new Date(b.when || 0); });
+  return '<ul class="triage-timeline">' + evts.map(function(e) {
+    return '<li class="triage-timeline-item triage-timeline-item-risk-' + (RISK_META[e.risk] ? e.risk : 'standard') + '">'
+      + '<span class="triage-timeline-dot"><i class="fas ' + e.icon + '"></i></span>'
+      + '<div class="triage-timeline-when">' + esc(fmtDate(e.when)) + '</div>'
+      + '<div class="triage-timeline-title">' + esc(e.title) + '</div>'
+      + (e.text ? '<div class="triage-timeline-text">' + esc(e.text) + '</div>' : '') + '</li>';
+  }).join('') + '</ul>';
+}
+function expandQueueItem(item) { expandedItem = item; var rm = RISK_META[item.risk]; var sm = STATUS_META[item.status] || STATUS_META.requested; var _sum = item.summary || (state.note ? state.note.summary : ''); var html = '<div class="triage-note-section"><h4><i class="fas fa-file-medical"></i> ' + esc(t('expand.note')) + '</h4><p>' + (_sum ? esc(_sum) : '<em>' + esc(t('expand.noNote')) + '</em>') + '</p></div>';
+  html += '<div class="triage-note-section"><h4><i class="fas fa-history"></i> ' + esc(t('expand.timeline')) + '</h4>' + buildItemTimeline(item) + '<p class="triage-muted" style="margin-top:6px;">' + fmtDate(item.createdAt) + ' · ' + esc(t('expand.createdVia')) + ' ' + esc(item.src) + ' ' + esc(t('expand.session')) + '</p>' + (item.timeline && item.timeline.length > 140 ? '<p>' + esc(item.timeline) + '</p>' : '') + '</div>';
   if (item.redFlags && item.redFlags.length) { html += '<div class="triage-note-section"><h4><i class="fas fa-flag"></i> Red Flags</h4><ul>' + item.redFlags.map(function(f) { return '<li>' + esc(f) + '</li>'; }).join('') + '</ul></div>'; }
-  if (item.tests && item.tests.length) { html += '<div class="triage-note-section"><h4><i class="fas fa-vial"></i> Findings</h4>'; item.tests.forEach(function(t) { html += '<div class="triage-finding-card"><div class="triage-finding-test">' + esc(t.name) + '</div><div class="triage-finding-value">' + esc(String(t.value)) + ' ' + esc(t.unit) + ' <span class="triage-flag-pill triage-flag-' + (t.flag || 'unknown') + '">' + esc(t.flag || 'unknown') + '</span></div></div>'; }); html += '</div>'; }
-  html += '<div class="triage-note-section"><h4><i class="fas fa-arrow-right-from-bracket"></i> Referral Prep</h4><div id="referral-preview"></div></div>';
+  if (item.missingInfo && item.missingInfo.length) {
+    html += '<div class="triage-note-section"><h4><i class="fas fa-circle-question"></i> ' + esc(t('expand.missing')) + ' <span class="triage-badge triage-badge-missing">' + item.missingInfo.length + '</span></h4><ul class="triage-question-list">' + item.missingInfo.map(function(m) { return '<li class="triage-q-missing"><i class="fas fa-circle-exclamation"></i><span>' + esc(m) + '</span></li>'; }).join('') + '</ul></div>';
+  }
+  if (item.followupQuestions && item.followupQuestions.length) {
+    html += '<div class="triage-note-section"><h4><i class="fas fa-comments"></i> ' + esc(t('expand.followup')) + ' <span class="triage-badge triage-badge-followup">' + item.followupQuestions.length + '</span></h4><ul class="triage-question-list">' + item.followupQuestions.map(function(q) { return '<li><i class="fas fa-circle-question"></i><label style="display:flex;gap:7px;align-items:flex-start;flex:1;"><input type="checkbox" class="triage-question-check"><span>' + esc(q) + '</span></label></li>'; }).join('') + '</ul></div>';
+  }
+  if (item.tests && item.tests.length) { html += '<div class="triage-note-section"><h4><i class="fas fa-vial"></i> Findings</h4>'; item.tests.forEach(function(t2) { html += '<div class="triage-finding-card"><div class="triage-finding-test">' + esc(t2.name) + '</div><div class="triage-finding-value">' + esc(String(t2.value)) + ' ' + esc(t2.unit) + ' <span class="triage-flag-pill triage-flag-' + (t2.flag || 'unknown') + '">' + esc(t2.flag || 'unknown') + '</span></div></div>'; }); html += '</div>'; }
+  html += '<div class="triage-note-section"><h4><i class="fas fa-arrow-right-from-bracket"></i> ' + esc(t('expand.referralPrep')) + '</h4><div id="referral-preview"></div></div>';
   $('#referral-body').innerHTML = html;
   var modal = $('#referral-modal'); modal.style.display = '';
   var actions = '<div class="triage-queue-actions"><span class="triage-acting">Status:</span>';
@@ -847,6 +1049,9 @@ function expandQueueItem(item) { expandedItem = item; var rm = RISK_META[item.ri
   if (item.patient_id) { actions += '<button class="btn-primary btn-sm" style="background:var(--amber,#d97706);color:#fff;" onclick="createInvoice(\'' + item.id + '\',\'' + item.patient_id + '\')"><i class="fas fa-file-invoice-dollar me-1"></i>Invoice</button>'; }
   actions += '<button class="btn-outline btn-sm" onclick="closeReferral()">Close</button></div>';
   $('#referral-body').insertAdjacentHTML('beforeend', actions);
+  $('#referral-body').querySelectorAll('.triage-question-check').forEach(function(cb) {
+    cb.addEventListener('change', function() { cb.closest('li').classList.toggle('triage-question-done', cb.checked); });
+  });
 }
 
 async function updateStatus(id, status) {
@@ -876,13 +1081,39 @@ async function updateStatus(id, status) {
 }
 
 /* ---------- Referral ---------- */
+function referralChecklist(item, note) {
+  var tests = note.tests || item.tests || [];
+  var checks = [
+    { ok: !!(item.ageBand || item.sex || item.patientName), key: 'referral.check.demographics' },
+    { ok: tests.length > 0, key: 'referral.check.reports' },
+    { ok: tests.length > 0, key: 'referral.check.vitals' },
+    { ok: false, key: 'referral.check.medications' },
+    { ok: false, key: 'referral.check.allergies' }
+  ];
+  return '<ul class="triage-referral-checklist">' + checks.map(function(c) {
+    return '<li class="' + (c.ok ? 'ok' : 'todo') + '"><i class="fas ' + (c.ok ? 'fa-circle-check' : 'fa-circle') + '"></i><span>' + esc(t(c.key)) + (c.ok ? '' : ' — verify before sending') + '</span></li>';
+  }).join('') + '</ul>';
+}
 function openReferral(itemId) {
   var item = mergedQueue().find(function(i) { return i.id === itemId; }); if (!item) return;
-  var note = state.note || { summary: item.narrative || '', risk: item.risk, score: item.score };
-  var md = '### Referral Note\n' + '- **Priority:** ' + (note.risk || 'standard').toUpperCase() + ' (' + (note.score || '—') + '/100)\n' + '- **Patient:** ' + esc(item.patientName || item.code || 'Anonymous') + '\n' + '- **Facility:** ' + esc(item.facilityName || state.facilityName || '—') + '\n' + '- **Summary:**\n' + '  > ' + esc(note.summary || '—') + '\n' + '- **Key info for receiving centre:**\n  - Chief complaints: ' + (note.chief_complaints || []).join(', ') + '\n' + '  - Red flags: ' + (note.red_flags || []).join(', ') + '\n' + '- **Transit precautions:** ' + (note.risk === 'emergency' ? 'Use fastest available emergency transport; notify receiving ED en route.' : note.risk === 'urgent' ? 'Priority transport; monitor en route.' : 'Routine referral scheduling.') + '\n' + '- **Disclaimer:** Advisory referral draft generated by an educational prototype; final clinical decisions remain with the qualified reviewer.';
-  $('#referral-preview').innerHTML = '<div class="triage-referral-box triage-referral-amber"><div class="triage-referral-label">Referral preview</div><pre style="margin-top:4px;">' + esc(md) + '</pre></div>';
+  var note = { summary: item.summary || (state.note && state.note.summary) || item.narrative || '', risk: item.risk || (state.note && state.note.risk) || 'standard', score: item.score || (state.note && state.note.score) || 0, chief_complaints: item.chiefComplaints || [], red_flags: item.redFlags || [] };
+  var transit = note.risk === 'emergency' ? t('referral.transitEmergency') : note.risk === 'urgent' ? t('referral.transitUrgent') : t('referral.transitRoutine');
+  var md = '### Referral Note\n' + '- **' + t('referral.priority') + ':** ' + (note.risk || 'standard').toUpperCase() + ' (' + (note.score || '—') + '/100)\n' + '- **' + t('referral.patient') + ':** ' + esc(item.patientName || item.code || 'Anonymous') + '\n' + '- **' + t('referral.facility') + ':** ' + esc(item.facilityName || state.facilityName || '—') + '\n' + '- **' + t('referral.summary') + ':**\n  > ' + esc(note.summary || '—') + '\n' + '- **' + t('referral.keyInfo') + ':**\n  - ' + t('referral.chief') + ': ' + (note.chief_complaints || []).join(', ') + '\n' + '  - ' + t('referral.redFlags') + ': ' + (note.red_flags || []).join(', ') + '\n' + '- **' + t('referral.transit') + ':** ' + transit + '\n' + '- **Disclaimer:** ' + t('referral.disclaimer');
+  var box = document.createElement('div');
+  box.innerHTML = '<div class="triage-referral-box triage-referral-amber"><div class="triage-referral-label">' + esc(t('referral.preview')) + '</div>'
+    + '<div style="margin-top:8px;"><strong>' + esc(t('referral.checklist')) + '</strong>' + referralChecklist(item, note) + '</div>'
+    + '<div class="triage-referral-transit"><i class="fas fa-truck-medical"></i><strong>' + esc(t('referral.transit')) + ':</strong> ' + esc(transit) + '</div>'
+    + '<pre style="margin-top:8px;white-space:pre-wrap;">' + esc(md) + '</pre></div>';
+  $('#referral-preview').innerHTML = '';
+  $('#referral-preview').appendChild(box);
+  var btnRow = document.createElement('div');
+  btnRow.className = 'triage-queue-actions';
+  btnRow.style.marginTop = '10px';
+  btnRow.innerHTML = '<button class="btn-outline btn-sm" id="referral-print-btn"><i class="fas fa-print me-1"></i>' + esc(t('referral.download')) + '</button>';
+  $('#referral-preview').appendChild(btnRow);
+  $('#referral-print-btn').addEventListener('click', function() { window.print(); });
   if (item.patient_id) {
-    var sendBtn = document.createElement('button'); sendBtn.className = 'btn-primary btn-sm'; sendBtn.style.marginTop = '10px'; sendBtn.innerHTML = '<i class="fas fa-paper-plane me-1"></i>Send referral to patient';
+    var sendBtn = document.createElement('button'); sendBtn.className = 'btn-primary btn-sm'; sendBtn.style.marginTop = '10px'; sendBtn.innerHTML = '<i class="fas fa-paper-plane me-1"></i>' + esc(t('referral.send'));
     sendBtn.addEventListener('click', function() { sendReferral(item); });
     $('#referral-body').appendChild(sendBtn);
   }

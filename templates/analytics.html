@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediAssist — Analytics Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/triage.css">
+    <script>(function(){try{var s=localStorage.getItem('theme');var m=window.matchMedia('(prefers-color-scheme: light)').matches;var t=s||(m?'light':'dark');document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body class="triage-body dash-body" data-role="{{ role }}">
+    <div class="triage-topbar">
+        <div class="triage-topbar-inner">
+            <div class="triage-brand">
+                <div class="brand-tile small"><i class="fas fa-chart-pie"></i></div>
+                <div class="lh-sm">
+                    <div class="fw-bold triage-brand-name">MediAssist — Analytics</div>
+                    <div class="sidebar-sub">Operational dashboard · {{ role|replace('_', ' ')|title }}</div>
+                </div>
+            </div>
+            <div class="triage-top-actions">
+                <a href="/home" class="btn-outline btn-sm"><i class="fas fa-arrow-left me-1"></i><span data-i18n="analytics.backHome">Back to triage</span></a>
+                <label class="dash-autolabel" title="Auto-refresh every 30 seconds"><input type="checkbox" id="dash-auto" checked> <span data-i18n="analytics.autoRefresh">Auto-refresh 30s</span></label>
+                <button class="btn-outline btn-sm" onclick="toggleTheme()" title="Toggle theme"><i class="theme-icon fas fa-moon"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <main class="triage-main dash-main">
+        <div class="dash-head">
+            <div>
+                <h1 class="dash-title"><i class="fas fa-chart-line me-2"></i><span data-i18n="analytics.title">Analytics Dashboard</span></h1>
+                <p class="triage-card-sub" data-i18n="analytics.localNote">All analytics are computed locally from the current triage log and server checkup list. No diagnostic conclusions are drawn.</p>
+            </div>
+            <div class="dash-head-actions">
+                <span class="dash-stamp" id="dash-stamp">—</span>
+                <button class="btn-outline btn-sm" onclick="exportCsv()"><i class="fas fa-file-csv me-1"></i><span data-i18n="analytics.export">Export CSV</span></button>
+                <button class="btn-primary btn-sm" onclick="loadSummary(true)"><i class="fas fa-rotate me-1"></i><span data-i18n="reviewer.refresh">Refresh</span></button>
+            </div>
+        </div>
+
+        <!-- KPIs -->
+        <section class="triage-kpi-grid dash-kpis" id="dash-kpis"></section>
+
+        <div class="dash-grid">
+            <div class="triage-card">
+                <div class="triage-card-head">
+                    <h3><i class="fas fa-chart-pie me-2"></i><span data-i18n="analytics.chart.mix">Risk mix</span></h3>
+                    <span class="triage-card-sub" data-i18n="analytics.chart.risk">Risk distribution</span>
+                </div>
+                <div id="dash-risk" class="dash-risk"></div>
+            </div>
+            <div class="triage-card">
+                <div class="triage-card-head">
+                    <h3><i class="fas fa-list-check me-2"></i><span data-i18n="analytics.chart.status">Status breakdown</span></h3>
+                    <span class="triage-card-sub">requested → completed</span>
+                </div>
+                <div id="dash-status" class="triage-bars"></div>
+            </div>
+            <div class="triage-card">
+                <div class="triage-card-head">
+                    <h3><i class="fas fa-notes-medical me-2"></i><span data-i18n="analytics.chart.scenarios">Top scenarios</span></h3>
+                    <span class="triage-card-sub">by session volume</span>
+                </div>
+                <div id="dash-scenario" class="triage-bars"></div>
+            </div>
+            <div class="triage-card">
+                <div class="triage-card-head">
+                    <h3><i class="fas fa-hospital me-2"></i><span data-i18n="analytics.chart.facilities">Facility breakdown</span></h3>
+                    <span class="triage-card-sub">deployment setting mix</span>
+                </div>
+                <div id="dash-facility" class="triage-bars"></div>
+            </div>
+            <div class="triage-card dash-span2">
+                <div class="triage-card-head">
+                    <h3><i class="fas fa-chart-area me-2"></i><span data-i18n="analytics.chart.line">Sessions over time</span></h3>
+                    <span class="triage-card-sub">last 30 days</span>
+                </div>
+                <div id="dash-trend" class="triage-linechart"></div>
+            </div>
+            <div class="triage-card dash-span2">
+                <div class="triage-card-head">
+                    <h3><i class="fas fa-clock me-2"></i>Intake by hour of day</h3>
+                    <span class="triage-card-sub">workload distribution</span>
+                </div>
+                <div id="dash-hours" class="dash-hours"></div>
+            </div>
+            <div class="triage-card">
+                <div class="triage-card-head">
+                    <h3><i class="fas fa-stethoscope me-2"></i>Checkup pipeline</h3>
+                    <span class="triage-card-sub">health-checkup requests</span>
+                </div>
+                <div id="dash-checkups" class="triage-bars"></div>
+            </div>
+            <div class="triage-card">
+                <div class="triage-card-head">
+                    <h3><i class="fas fa-bolt me-2"></i><span data-i18n="analytics.activity">Recent activity</span></h3>
+                    <span class="triage-card-sub">latest triage events</span>
+                </div>
+                <div id="dash-activity" class="dash-activity"></div>
+            </div>
+        </div>
+
+        <footer class="triage-footer">
+            <div class="triage-footer-inner">
+                <p class="triage-disclaimer" data-i18n-html="footer.disclaimer"><strong>Disclaimer:</strong> This is an <strong>educational prototype</strong> for triage-support only. It does <strong>not</strong> diagnose, prescribe, or replace a qualified medical professional. All outputs are advisory and reviewer-facing. Uses <strong>synthetic / sample data only</strong>. Final clinical decisions must always be made by a qualified reviewer.</p>
+                <p class="triage-trust"><span data-i18n="footer.trust">Consent-gated · Anonymized · Audit-logged · Non-diagnostic</span></p>
+            </div>
+        </footer>
+    </main>
+
+    <script src="/static/js/i18n.js?v=1"></script>
+    <script src="/static/js/dashboard.js?v=1"></script>
+    <script>applyI18n();</script>
+</body>
+</html>

@@ -31,6 +31,10 @@
                     <option value="health_worker">Health Worker (ASHA/ANM)</option>
                 </select>
                 {% endif %}
+                <div class="triage-lang-wrap" title="UI language">
+                    <i class="fas fa-globe"></i>
+                    <select class="triage-input triage-select-sm triage-select-lang" id="ui-lang" aria-label="UI language"></select>
+                </div>
                 <button class="theme-toggle theme-toggle-sm" onclick="toggleTheme()" title="Toggle theme"><i class="theme-icon fas fa-moon"></i></button>
                 <div class="triage-notif-wrap">
                     <button class="triage-notif-btn" onclick="toggleNotifPanel()" title="Notifications" aria-label="Notifications"><i class="fas fa-bell"></i><span class="triage-notif-badge" id="notif-count" style="display:none;"></span></button>
@@ -59,29 +63,29 @@
                     <span class="triage-hero-pill"><i class="fa-solid fa-wave me-1"></i>Welcome back{% if name and name|trim %}, {{ name|trim }}{% endif %}</span>
                     <span class="triage-hero-pill triage-hero-pill-outline"><i class="fas fa-user-shield me-1"></i>{{ role|replace('_', ' ')|title }} workspace</span>
                 </div>
-                <h1 class="triage-hero-title">{% if role == 'patient' %}Your symptoms, reports &amp; follow-ups — organized in one place.{% else %}Multimodal Healthcare Triage Assistant for <span class="triage-hero-accent">India-wide public &amp; institutional facilities</span>{% endif %}</h1>
-                <p class="triage-hero-sub">{% if role == 'patient' %}Ask about symptoms, upload lab reports for OCR, and get a structured, non-diagnostic triage note ready for a qualified reviewer. Your prescriptions, invoices and checkup status live under <strong>My Records</strong>.{% else %}Helps government hospitals, PHCs, public health camps, company clinics, industrial-estate health units and campus health centres summarize symptoms, voice, OCR'd reports and visual inputs into a structured triage note — for qualified human review. Explicitly <strong>non-diagnostic</strong>: it organizes information, highlights urgency signals and supports faster review. It never prescribes treatment.{% endif %}</p>
+                <h1 class="triage-hero-title" {% if role == 'patient' %}data-i18n="hero.patientTitle"{% else %}data-i18n-html="hero.staffTitle"{% endif %}>{% if role == 'patient' %}Your symptoms, reports &amp; follow-ups — organized in one place.{% else %}Multimodal Healthcare Triage Assistant for <span class="triage-hero-accent">India-wide public &amp; institutional facilities</span>{% endif %}</h1>
+                <p class="triage-hero-sub" {% if role == 'patient' %}data-i18n-html="hero.patientSub"{% else %}data-i18n-html="hero.staffSub"{% endif %}>{% if role == 'patient' %}Ask about symptoms, upload lab reports for OCR, and get a structured, non-diagnostic triage note ready for a qualified reviewer. Your prescriptions, invoices and checkup status live under <strong>My Records</strong>.{% else %}Helps government hospitals, PHCs, public health camps, company clinics, industrial-estate health units and campus health centres summarize symptoms, voice, OCR'd reports and visual inputs into a structured triage note — for qualified human review. Explicitly <strong>non-diagnostic</strong>: it organizes information, highlights urgency signals and supports faster review. It never prescribes treatment.{% endif %}</p>
                 <div class="triage-stats" id="hero-stats"></div>
             </div>
             <div class="triage-facility-card">
                 <div class="triage-card-head">
-                    <h3><i class="fas fa-layer-group me-2"></i>Facility Context</h3>
-                    <span class="triage-card-sub">Choose the deployment setting — this tunes scenarios.</span>
+                    <h3 data-i18n="facility.title"><i class="fas fa-layer-group me-2"></i>Facility Context</h3>
+                    <span class="triage-card-sub" data-i18n="facility.sub">Choose the deployment setting — this tunes scenarios.</span>
                 </div>
                 <div class="form-group">
-                    <label>Facility Type</label>
+                    <label data-i18n="facility.type">Facility Type</label>
                     <select class="triage-input" id="facility-type" onchange="onFacilityChange(this.value)"></select>
                 </div>
                 <div class="form-group">
-                    <label>Scenario</label>
+                    <label data-i18n="facility.scenario">Scenario</label>
                     <select class="triage-input" id="scenario"></select>
                 </div>
                 <div class="form-group">
-                    <label>Facility name (optional)</label>
-                    <input class="triage-input" id="facility-name" placeholder="e.g. District Hospital, PHC Baripada">
+                    <label data-i18n="facility.name">Facility name (optional)</label>
+                    <input class="triage-input" id="facility-name" placeholder="e.g. District Hospital, PHC Baripada" data-i18n-ph="facility.namePlaceholder">
                 </div>
                 {% if role in ('doctor', 'nurse') %}
-                <button class="btn-primary btn-block" onclick="seedDemo()" id="seed-btn"><i class="fas fa-database me-2"></i>Load 8 synthetic demo cases</button>
+                <button class="btn-primary btn-block" onclick="seedDemo()" id="seed-btn"><i class="fas fa-database me-2"></i><span data-i18n="facility.seed">Load 8 synthetic demo cases</span></button>
                 {% endif %}
             </div>
         </div>
@@ -90,30 +94,36 @@
     <!-- Tabs -->
     <main class="triage-main">
         <div class="triage-tabs" role="tablist">
-            <button class="triage-tab is-active" data-tab="intake" role="tab"><i class="fas fa-clipboard-list me-1"></i>Triage Intake</button>
+            <button class="triage-tab is-active" data-tab="intake" role="tab"><i class="fas fa-clipboard-list me-1"></i><span data-i18n="tab.intake">Triage Intake</span></button>
             {% if role in ('doctor', 'nurse') %}
-            <button class="triage-tab" data-tab="reviewer" role="tab"><i class="fas fa-eye me-1"></i>Reviewer <span class="triage-tab-count" id="reviewer-badge" style="display:none;"></span></button>
-            <button class="triage-tab" data-tab="analytics" role="tab"><i class="fas fa-chart-pie me-1"></i>Analytics</button>
-            <button class="triage-tab" data-tab="audit" role="tab"><i class="fas fa-scroll me-1"></i>Audit Trail</button>
-            <button class="triage-tab" data-tab="history" role="tab"><i class="fas fa-history me-1"></i>Patient History</button>
+            <button class="triage-tab" data-tab="reviewer" role="tab"><i class="fas fa-eye me-1"></i><span data-i18n="tab.reviewer">Reviewer</span> <span class="triage-tab-count" id="reviewer-badge" style="display:none;"></span></button>
+            <button class="triage-tab" data-tab="analytics" role="tab"><i class="fas fa-chart-pie me-1"></i><span data-i18n="tab.analytics">Analytics</span></button>
+            <button class="triage-tab" data-tab="audit" role="tab"><i class="fas fa-scroll me-1"></i><span data-i18n="tab.audit">Audit Trail</span></button>
+            <button class="triage-tab" data-tab="history" role="tab"><i class="fas fa-history me-1"></i><span data-i18n="tab.historyStaff">Patient History</span></button>
             {% endif %}
             {% if role == 'patient' %}
-            <button class="triage-tab" data-tab="history" role="tab"><i class="fas fa-history me-1"></i>My Follow-ups</button>
-            <button class="triage-tab" data-tab="records" role="tab"><i class="fas fa-folder-open me-1"></i>My Records<span class="triage-tab-count" id="records-badge" style="display:none;"></span></button>
+            <button class="triage-tab" data-tab="history" role="tab"><i class="fas fa-history me-1"></i><span data-i18n="tab.historyPatient">My Follow-ups</span></button>
+            <button class="triage-tab" data-tab="records" role="tab"><i class="fas fa-folder-open me-1"></i><span data-i18n="tab.records">My Records</span><span class="triage-tab-count" id="records-badge" style="display:none;"></span></button>
             {% endif %}
-            <button class="triage-tab" data-tab="book-call" role="tab"><i class="fas fa-phone me-1"></i>Book Call</button>
-            <button class="triage-tab" data-tab="about" role="tab"><i class="fas fa-circle-info me-1"></i>About &amp; Privacy</button>
+            <button class="triage-tab" data-tab="book-call" role="tab"><i class="fas fa-phone me-1"></i><span data-i18n="tab.bookCall">Book Call</span></button>
+            <button class="triage-tab" data-tab="about" role="tab"><i class="fas fa-circle-info me-1"></i><span data-i18n="tab.about">About &amp; Privacy</span></button>
         </div>
 
         <!-- INTAKE -->
         <section class="triage-tabpanel is-active" id="tab-intake">
+            <div id="scenario-banner" class="triage-scenario-banner" style="display:none;">
+                <div class="triage-scenario-banner-head"><i class="fas fa-route"></i><span data-i18n="scenario.bannerTitle">Scenario workflow</span><span id="scenario-banner-name" class="triage-badge triage-badge-status" style="margin-left:auto;"></span></div>
+                <div class="triage-scenario-sub" data-i18n="scenario.ask">Suggested questions for this scenario</div>
+                <div class="triage-scenario-chips" id="scenario-ask-chips"></div>
+                <div class="triage-scenario-guide"><strong><i class="fas fa-compass me-1"></i><span data-i18n="scenario.guide">Guidance</span>:</strong> <span id="scenario-guide-text"></span></div>
+            </div>
             <div class="triage-grid intake-grid">
                 <div class="triage-col-left">
                     <!-- Intake form -->
                     <div class="triage-card">
                         <div class="triage-card-head">
-                            <h3><i class="fas fa-clipboard-list me-2 triage-teal"></i>Patient Intake</h3>
-                            <span class="triage-card-sub">Capture symptoms via <strong>text</strong> or <strong>live voice</strong>. Optionally upload lab reports for OCR. Generate a structured, non-diagnostic triage note.</span>
+                            <h3 data-i18n="intake.title"><i class="fas fa-clipboard-list me-2 triage-teal"></i>Patient Intake</h3>
+                            <span class="triage-card-sub" data-i18n-html="intake.sub">Capture symptoms via <strong>text</strong> or <strong>live voice</strong>. Optionally upload lab reports for OCR. Generate a structured, non-diagnostic triage note.</span>
                         </div>
                         <div class="triage-form">
                             <div class="triage-form-grid triage-form-grid-4">
@@ -136,7 +146,7 @@
                             </div>
                             <div class="form-group">
                                 <div class="triage-narrative-head">
-                                    <label>Patient Symptom Narrative</label>
+                                    <label data-i18n="intake.narrativeLabel">Patient Symptom Narrative</label>
                                     <div class="triage-narrative-actions">
                                         <button class="btn-outline btn-sm" id="mic-btn" style="display:none;" title="Speak — live voice input"><i class="fas fa-microphone me-1"></i><span id="mic-label">Speak (live)</span></button>
                                         <button type="button" class="btn-outline btn-sm" onclick="clearSymptoms()" id="clear-symptoms" style="display:none;"><i class="fas fa-rotate-left me-1"></i>Clear</button>
@@ -147,12 +157,12 @@
                                     <div class="triage-listening-pill" id="listening-pill" style="display:none;"><span class="triage-pulse"></span> LIVE</div>
                                 </div>
                                 <div class="triage-mic-note" id="mic-error"></div>
-                                <p class="triage-hint">Voice uses Chrome/Edge's built-in Web Speech API for live transcription — no audio is sent to a server. Other browsers fall back to secure server-side transcription when configured (HTTPS or localhost required).</p>
+                                <p class="triage-hint" data-i18n="intake.hint">Voice uses Chrome/Edge's built-in Web Speech API for live transcription — no audio is sent to a server. Other browsers fall back to secure server-side transcription when configured (HTTPS or localhost required).</p>
                             </div>
                             <div class="triage-consent">
-                                <label class="triage-check"><input type="checkbox" id="consent"> <span>Patient (or guardian) has given informed consent for this triage-assist prototype</span></label>
-                                <p class="triage-consent-sub">The patient understands this is an <strong>educational prototype</strong> that only organizes information for a qualified reviewer. It does not diagnose or prescribe. Synthetic/sample data only — no real patient records.</p>
-                                <div class="triage-consent-badge" id="consent-badge" style="display:none;"><i class="fas fa-shield-halved me-1"></i>Consent recorded · audit-logged</div>
+                                <label class="triage-check"><input type="checkbox" id="consent"> <span data-i18n="intake.consent">Patient (or guardian) has given informed consent for this triage-assist prototype</span></label>
+                                <p class="triage-consent-sub" data-i18n-html="intake.consentSub">The patient understands this is an <strong>educational prototype</strong> that only organizes information for a qualified reviewer. It does not diagnose or prescribe. Synthetic/sample data only — no real patient records.</p>
+                                <div class="triage-consent-badge" id="consent-badge" style="display:none;"><i class="fas fa-shield-halved me-1"></i><span data-i18n="intake.consentBadge">Consent recorded · audit-logged</span></div>
                             </div>
                         </div>
                     </div>
@@ -180,10 +190,10 @@
 
                     <!-- Actions -->
                     <div class="triage-actions">
-                        <button class="btn-primary" id="generate-btn" disabled><i class="fas fa-wand-magic-sparkles me-2"></i><span id="generate-btn-label">Generate Triage Note</span></button>
-                        <button class="btn-outline" id="new-intake-btn" onclick="resetIntake()" style="display:none;"><i class="fas fa-arrows-rotate me-2"></i>New intake</button>
+                        <button class="btn-primary" id="generate-btn" disabled><i class="fas fa-wand-magic-sparkles me-2"></i><span id="generate-btn-label" data-i18n="action.generate">Generate Triage Note</span></button>
+                        <button class="btn-outline" id="new-intake-btn" onclick="resetIntake()" style="display:none;"><i class="fas fa-arrows-rotate me-2"></i><span data-i18n="action.newIntake">New intake</span></button>
                         {% if role in ('doctor', 'nurse') %}
-                        <button class="btn-outline" id="open-queue-btn" onclick="switchTab('reviewer')" style="display:none;">Open in reviewer queue →</button>
+                        <button class="btn-outline" id="open-queue-btn" onclick="switchTab('reviewer')" style="display:none;"><span data-i18n="action.openQueue">Open in reviewer queue →</span></button>
                         {% endif %}
                     </div>
                 </div>
@@ -191,17 +201,20 @@
                 <!-- Triage note result -->
                 <div class="triage-col-right">
                     <div class="triage-card triage-sticky">
-                        <div class="triage-card-head">
-                            <h3><i class="fas fa-activity me-2 triage-violet"></i>Structured Triage Note</h3>
-                            <span class="triage-card-sub">Reviewer-facing. Advisory only — final clinical decisions remain with the qualified reviewer.</span>
+                        <div class="triage-card-head triage-card-head-row">
+                            <div>
+                                <h3 data-i18n="note.title"><i class="fas fa-activity me-2 triage-violet"></i>Structured Triage Note</h3>
+                                <span class="triage-card-sub" data-i18n="note.sub">Reviewer-facing. Advisory only — final clinical decisions remain with the qualified reviewer.</span>
+                            </div>
+                            <button class="btn-outline btn-sm triage-translate-btn" id="note-translate-btn" style="display:none;" onclick="translateNote()" title="Translate this note"><i class="fas fa-language me-1"></i><span data-i18n="note.translate">Translate note</span></button>
                         </div>
                         <div id="note-empty" class="triage-note-empty">
                             <i class="fas fa-wand-magic-sparkles"></i>
-                            Fill the intake form, check consent, then click <strong>Generate Triage Note</strong>.
+                            <span data-i18n-html="note.empty">Fill the intake form, check consent, then click <strong>Generate Triage Note</strong>.</span>
                         </div>
                         <div id="note-loading" style="display:none;" class="triage-note-loading">
                             <div class="triage-spinner"></div>
-                            <p>Summarizing symptoms, extracting findings, identifying urgency signals…</p>
+                            <p data-i18n="note.loading">Summarizing symptoms, extracting findings, identifying urgency signals…</p>
                         </div>
                         <div id="note-result" style="display:none;"></div>
                     </div>
@@ -215,8 +228,8 @@
             <div class="triage-card">
                 <div class="triage-card-head triage-card-head-row">
                     <div>
-                        <h3><i class="fas fa-eye me-2 triage-blue"></i>Reviewer Queue — prioritized by risk</h3>
-                        <span class="triage-card-sub">Acting as <strong class="capitalize" id="reviewer-role-label">medical officer</strong>. Emergency first, then urgent, standard, routine.</span>
+                        <h3 data-i18n="reviewer.title"><i class="fas fa-eye me-2 triage-blue"></i>Reviewer Queue — prioritized by risk</h3>
+                        <span class="triage-card-sub" data-i18n-html="reviewer.sub">Acting as <strong class="capitalize" id="reviewer-role-label">medical officer</strong>. Emergency first, then urgent, standard, routine. Drag rows or use the arrows to reprioritize.</span>
                     </div>
                     <div class="d-flex align-items-center gap-2">
                         <button class="btn-outline btn-sm" onclick="refreshQueue()"><i class="fas fa-rotate me-1"></i>Refresh</button>
@@ -247,7 +260,11 @@
                     <span class="triage-muted ms-auto" id="queue-count"></span>
                 </div>
                 <div id="queue-skeleton" class="triage-skeleton" style="display:none;"><div></div><div></div><div></div><div></div></div>
-                <div id="queue-empty" class="triage-empty" style="display:none;"><i class="fas fa-inbox"></i><p>No sessions match the current filter.</p></div>
+                <div id="queue-empty" class="triage-empty" style="display:none;"><i class="fas fa-inbox"></i><p data-i18n="queue.empty">No sessions match the current filter.</p></div>
+                <div id="queue-pinbar" class="triage-queue-pinbar" style="display:none;">
+                    <span><i class="fas fa-thumbtack me-1"></i><span id="queue-pincount">0</span> <span data-i18n="queue.pinned">pinned priority</span> — shown above risk order</span>
+                    <button class="btn-outline btn-sm" onclick="clearPinnedQueue()"><i class="fas fa-xmark me-1"></i><span data-i18n="queue.clearPin">Clear pinned priority</span></button>
+                </div>
                 <div id="queue-list" class="triage-queue"></div>
             </div>
             <div class="triage-card" id="digest-card">
@@ -333,6 +350,13 @@
 
         <!-- ANALYTICS -->
         <section class="triage-tabpanel" id="tab-analytics">
+            <div class="triage-card-head triage-card-head-row" style="margin-bottom:14px;">
+                <div>
+                    <h3 data-i18n="analytics.title"><i class="fas fa-chart-pie me-2"></i>Analytics Dashboard</h3>
+                    <span class="triage-card-sub" data-i18n-html="analytics.localNote">All analytics are computed locally from the current triage log and server checkup list. No diagnostic conclusions are drawn.</span>
+                </div>
+                <a href="/analytics" class="btn-primary btn-sm"><i class="fas fa-arrow-up-right-from-square me-1"></i><span data-i18n="analytics.openFull">Open full dashboard</span></a>
+            </div>
             <div id="analytics-content"></div>
         </section>
 
@@ -442,16 +466,17 @@
         <div class="triage-footer-inner">
             <div class="triage-disclaimer">
                 <i class="fas fa-shield-halved"></i>
-                <p><strong>Disclaimer:</strong> This is an <strong>educational prototype</strong> for triage-support only. It does <strong>not</strong> diagnose, prescribe, or replace a qualified medical professional. All outputs are advisory and reviewer-facing. Uses <strong>synthetic / sample data only</strong>. Final clinical decisions must always be made by a qualified reviewer.</p>
+                <p data-i18n-html="footer.disclaimer"><strong>Disclaimer:</strong> This is an <strong>educational prototype</strong> for triage-support only. It does <strong>not</strong> diagnose, prescribe, or replace a qualified medical professional. All outputs are advisory and reviewer-facing. Uses <strong>synthetic / sample data only</strong>. Final clinical decisions must always be made by a qualified reviewer.</p>
             </div>
             <div class="triage-footer-row">
-                <span>MediAssist — Triage · Multimodal Healthcare Triage Assistant · Built for India-wide public health settings</span>
-                <span class="d-flex align-items-center gap-2"><i class="fas fa-circle-check triage-teal"></i><span class="triage-muted">Consent-gated · Anonymized · Audit-logged · Non-diagnostic</span></span>
+                <span data-i18n="footer.brand">MediAssist — Triage · Multimodal Healthcare Triage Assistant · Built for India-wide public health settings</span>
+                <span class="d-flex align-items-center gap-2"><i class="fas fa-circle-check triage-teal"></i><span class="triage-muted" data-i18n="footer.trust">Consent-gated · Anonymized · Audit-logged · Non-diagnostic</span></span>
             </div>
         </div>
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="/static/js/triage.js?v=9"></script>
+    <script src="/static/js/i18n.js?v=1"></script>
+    <script src="/static/js/triage.js?v=10"></script>
 </body>
 </html>

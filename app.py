@@ -1824,6 +1824,160 @@ def chat_page(request: Request, session_id: Optional[str] = Cookie(None)):
         "name": profile.get("name", ""),
     })
 
+@app.post("/api/translate")
+async def api_translate(request: Request, session_id: Optional[str] = Cookie(None)):
+    """LLM-backed UI translation (notes / chat / short strings). Advisory only."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    body = await request.json()
+    text = str(body.get("text") or "").strip()
+    target = str(body.get("target") or "en").strip().lower()
+    target_name = str(body.get("target_name") or "").strip()
+    if not text:
+        return {"status": "ok", "translated": ""}
+    allowed = {"en", "hi", "bn", "ta", "te", "mr", "gu"}
+    if target not in allowed:
+        raise HTTPException(status_code=400, detail="Unsupported target language")
+    if target == "en":
+        return {"status": "ok", "translated": text}
+    if not target_name:
+        target_name = {"hi": "Hindi", "bn": "Bengali", "ta": "Tamil", "te": "Telugu",
+                       "mr": "Marathi", "gu": "Gujarati"}.get(target, target)
+    cache_key = "tr:" + target + ":" + hashlib.sha256(text[:4000].encode("utf-8", "ignore")).hexdigest()
+    hit = _ai_cache_lookup(cache_key)
+    if hit:
+        return {"status": "ok", "translated": hit[1], "cached": True}
+    sys_prompt = (
+        "You are a professional medical translator for an Indian public-health triage tool. "
+        f"Translate the user's text into {target_name}. "
+        "Keep clinical terms accurate, preserve line breaks, numbers, labels and any structured lists. "
+        "Do not add explanations, quotes or commentary — output only the translation."
+    )
+    try:
+        resp = config.conversation.llm.invoke([("system", sys_prompt), ("human", text[:6000])])
+        translated = (getattr(resp, "content", "") or "").strip()
+        if not translated:
+            translated = text
+    except Exception as e:
+        logger.warning(f"Translation failed ({target}): {e}")
+        translated = text
+    _ai_cache_store(cache_key, translated)
+    return {"status": "ok", "translated": translated, "target": target}
+
+@app.get("/analytics", response_class=HTMLResponse)
+def analytics_page(request: Request, session_id: Optional[str] = Cookie(None)):
+    """Full-screen analytics dashboard (staff only). Legacy /dashboard stays untouched."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Please log in"})
+    if payload["role"] not in ("doctor", "nurse"):
+        return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Analytics is for clinical staff"})
+    user = db.get_user(payload["user_id"])
+    profile = db.get_profile(payload["user_id"]) or {}
+    return templates.TemplateResponse(request, "analytics.html", {
+        "request": request,
+        "role": payload["role"],
+        "name": profile.get("name", "") or (user.get("email", "") if user else ""),
+    })
+
+@app.get("/api/analytics/summary")
+def analytics_summary(session_id: Optional[str] = Cookie(None)):
+    """Aggregated operational metrics for the dashboard. No diagnostic conclusions."""
+    payload = verify_session_cookie(session_id)
+    if not payload or payload["role"] not in ("doctor", "nurse"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    def _day(ts):
+        return (ts or "")[:10]
+
+    risk_counts, status_counts, scenario_counts, facility_counts = {}, {}, {}, {}
+    day_counts, hour_counts = {}, {}
+    sessions = []
+    try:
+        sessions = db.get_triage_sessions(limit=500)
+    except Exception as e:
+        logger.warning(f"analytics: triage sessions failed: {e}")
+    for s in sessions:
+        risk_counts[s.get("risk") or "standard"] = risk_counts.get(s.get("risk") or "standard", 0) + 1
+        status_counts[s.get("status") or "requested"] = status_counts.get(s.get("status") or "requested", 0) + 1
+        scenario_counts[s.get("scenario") or "—"] = scenario_counts.get(s.get("scenario") or "—", 0) + 1
+        facility_counts[s.get("facility") or "—"] = facility_counts.get(s.get("facility") or "—", 0) + 1
+        d = _day(s.get("created_at"))
+        if d:
+            day_counts[d] = day_counts.get(d, 0) + 1
+        try:
+            hh = int((s.get("created_at") or "T00")[11:13])
+            hour_counts[hh] = hour_counts.get(hh, 0) + 1
+        except (ValueError, TypeError):
+            pass
+
+    # Last 30 days of activity (fill gaps with zero so the chart is continuous)
+    from datetime import timedelta
+    series, labels = [], []
+    today = datetime.now(timezone.utc).date()
+    for i in range(29, -1, -1):
+        d = (today - timedelta(days=i)).isoformat()
+        labels.append(d)
+        series.append(day_counts.get(d, 0))
+
+    checkups, instructions, bookings = [], [], []
+    try:
+        checkups = db.get_checkups()
+    except Exception as e:
+        logger.warning(f"analytics: checkups failed: {e}")
+    try:
+        instructions = db.get_doctor_instructions(payload["user_id"])
+    except Exception as e:
+        logger.warning(f"analytics: instructions failed: {e}")
+    try:
+        bookings = db.get_bookings(payload["user_id"], payload["role"]) or []
+    except Exception:
+        bookings = []
+
+    checkup_status_counts = {}
+    for c in checkups:
+        st = c.get("status") or "requested"
+        checkup_status_counts[st] = checkup_status_counts.get(st, 0) + 1
+
+    avg_score = round(sum((s.get("score") or 0) for s in sessions) / len(sessions), 1) if sessions else 0
+    today_iso = today.isoformat()
+    activity = []
+    for s in sessions[:12]:
+        activity.append({
+            "kind": "triage",
+            "title": "Triage " + (s.get("anonym_code") or (s.get("id") or "")[:8]),
+            "risk": s.get("risk") or "standard",
+            "status": s.get("status") or "requested",
+            "at": s.get("created_at"),
+            "detail": (s.get("summary") or s.get("narrative") or "")[:120],
+        })
+
+    return {
+        "status": "ok",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "kpis": {
+            "sessions": len(sessions),
+            "emergency": risk_counts.get("emergency", 0),
+            "urgent": risk_counts.get("urgent", 0),
+            "completed": status_counts.get("completed", 0),
+            "avg_score": avg_score,
+            "today": day_counts.get(today_iso, 0),
+            "checkups": len(checkups),
+            "instructions": len(instructions),
+            "bookings": len(bookings),
+        },
+        "risk": risk_counts,
+        "status": status_counts,
+        "scenario": scenario_counts,
+        "facility": facility_counts,
+        "checkup_status": checkup_status_counts,
+        "trend": {"labels": labels, "series": series},
+        "hours": [{"hour": h, "count": hour_counts.get(h, 0)} for h in range(24)],
+        "activity": activity,
+        "local": True,
+    }
+
 @app.get("/emergency", response_class=HTMLResponse)
 def emergency_page(request: Request):
     """Hidden standalone emergency ambulance request page (trial mode).
