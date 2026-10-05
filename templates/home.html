@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-<!-- Book Call tab update - forcing fresh deploy -->
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -46,7 +45,8 @@
                         <div id="notif-list" class="triage-notif-list"><div class="triage-empty" style="padding:14px;"><p>Loading…</p></div></div>
                     </div>
                 </div>
-                <a href="/chat" class="btn-outline btn-sm"><i class="fas fa-comments me-1"></i>Chat</a>
+                <a href="/chat" class="btn-outline btn-sm"><i class="fas fa-comments me-1"></i><span data-i18n="nav.chat">Chat</span></a>
+                <a href="/emergency" class="btn-outline btn-sm triage-emergency-link" title="Ambulance request (trial mode)"><i class="fas fa-truck-medical me-1"></i><span data-i18n="nav.emergency">Emergency</span></a>
                 {% if role == 'patient' %}
                 <a href="/profile" class="btn-outline btn-sm"><i class="fas fa-notes-medical me-1"></i>Profile</a>
                 {% endif %}

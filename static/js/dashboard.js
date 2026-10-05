@@ -68,8 +68,8 @@ function renderKpis(k) {
     { key: 'analytics.kpi.completed', icon: 'fa-circle-check', v: k.completed || 0, color: RISK_COLORS.routine },
     { key: 'analytics.kpi.avgScore', icon: 'fa-gauge-high', v: k.avg_score || 0 },
     { key: 'analytics.kpi.today', icon: 'fa-calendar-day', v: k.today || 0 },
-    { key: 'Checkups', icon: 'fa-stethoscope', v: k.checkups || 0 },
-    { key: 'Instructions', icon: 'fa-file-medical', v: k.instructions || 0 }
+    { key: 'analytics.kpi.checkups', icon: 'fa-stethoscope', v: k.checkups || 0 },
+    { key: 'analytics.kpi.instructions', icon: 'fa-file-medical', v: k.instructions || 0 }
   ];
   el.innerHTML = cards.map(function(c) {
     var isKey = c.key.indexOf('.') !== -1;
@@ -104,7 +104,7 @@ function renderRisk(risk) {
   var legend = entries.map(function(e) {
     var pct = Math.round((e.v / total) * 100);
     return '<div class="dash-legend-row"><span class="dash-legend-dot" style="background:' + (RISK_COLORS[e.k] || '#60a5fa') + '"></span>' +
-      '<span class="dash-legend-label">' + esc(e.k) + '</span><span class="dash-legend-val">' + e.v + ' · ' + pct + '%</span></div>';
+      '<span class="dash-legend-label">' + esc(e.k.charAt(0).toUpperCase() + e.k.slice(1)) + '</span><span class="dash-legend-val">' + e.v + ' · ' + pct + '%</span></div>';
   }).join('');
   el.innerHTML = '<div class="triage-donut-wrap"><div class="triage-donut"><svg viewBox="0 0 140 140">' + segs +
     '</svg><div class="triage-donut-center"><b>' + total + '</b><span>sessions</span></div></div>' +

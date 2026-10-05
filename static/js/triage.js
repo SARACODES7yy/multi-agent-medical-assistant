@@ -861,16 +861,21 @@ function checkCriticalLabs(items) {
   var keys = {};
   (items || []).forEach(function(i) { if ((i.lab_severity || 0) >= 2) keys[i.id || i.code] = (i.patient_name || i.anonym_code || i.code || 'unknown patient'); });
   var prev = state.lastCriticalLabs || {};
-  Object.keys(keys).forEach(function(k) { if (!prev[k]) showToast('<i class="fas fa-vial-circle-check me-1"></i><strong>Critical lab result:</strong> ' + esc(keys[k]), true); });
+  var now = Date.now(), TTL = 6 * 3600 * 1000;
+  var seen = lsGet('triage.crit.seen', {});
+  Object.keys(seen).forEach(function(k) { if (now - seen[k] > TTL) delete seen[k]; });
+  Object.keys(keys).forEach(function(k) { if (!prev[k] && !seen[k]) { showToast('<i class="fas fa-vial-circle-check me-1"></i><strong>Critical lab result:</strong> ' + esc(keys[k]), true); seen[k] = now; } });
   state.lastCriticalLabs = keys;
+  lsSet('triage.crit.seen', seen);
 }
 function showToast(html, sticky) {
   var wrap = $('#toast-wrap'); if (!wrap) return;
+  while (wrap.children.length >= 3) { wrap.removeChild(wrap.firstElementChild); }
   var t = document.createElement('div');
   t.className = 'triage-toast' + (sticky ? ' triage-toast-critical' : '');
   t.innerHTML = html + '<button class="triage-toast-close" onclick="this.parentNode.remove()"><i class="fas fa-times"></i></button>';
   wrap.appendChild(t);
-  setTimeout(function() { if (t.parentNode) t.remove(); }, sticky ? 20000 : 6000);
+  setTimeout(function() { if (t.parentNode) t.remove(); }, sticky ? 12000 : 6000);
 }
 /* ---------- Queue prioritization (pinned order + drag/arrows) ---------- */
 function pinnedKey() { return 'triage.pinned.' + (state.role || 'patient'); }
@@ -946,6 +951,8 @@ function updateBadge() { if (state.isStaff) { var items = mergedQueue(); var cnt
 
 function renderQueue() {
   var list = $('#queue-list'); if (!list) return;
+  var skel = $('#queue-skeleton'); if (skel) skel.style.display = 'none';
+  var emptyEl = $('#queue-empty');
   var fStatus = ($('#filter-status') ? $('#filter-status').value : '');
   var fRisk = ($('#filter-risk') ? $('#filter-risk').value : '');
   var items = mergedQueue().filter(function(i) { if (fStatus && i.status !== fStatus) return false; if (fRisk && i.risk !== fRisk) return false; return true; });
@@ -958,23 +965,26 @@ function renderQueue() {
     var pc = $('#queue-pincount'); if (pc) pc.textContent = active;
   }
   var countEl = $('#queue-count'); if (countEl) countEl.textContent = items.length + ' session' + (items.length !== 1 ? 's' : '');
-  if (!items.length) { list.innerHTML = '<div class="triage-empty"><i class="fas fa-inbox"></i><p>' + esc(t('queue.empty')) + '</p></div>'; return; }
+  if (!items.length) { list.innerHTML = ''; if (emptyEl) emptyEl.style.display = ''; return; }
+  if (emptyEl) emptyEl.style.display = 'none';
   var html = '';
   items.forEach(function(item) {
     var rw = riskWeight(item.risk); var rm = RISK_META[item.risk]; var sm = STATUS_META[item.status] || STATUS_META.requested;
     var _fu = followUpPill(item); var fuHtml = (_fu && _fu.html) ? _fu.html : '';
     var labBadge = '';
-    if (item.labSeverity >= 2) labBadge = '<span class="triage-badge triage-lab-critical"><i class="fas fa-vial-circle-check me-1"></i>Critical lab</span>';
-    else if (item.labSeverity === 1) labBadge = '<span class="triage-badge triage-lab-abnormal"><i class="fas fa-vial me-1"></i>Abnormal lab</span>';
+    if (item.labSeverity >= 2) labBadge = '<span class="triage-badge triage-lab-critical" title="Critical lab result"><i class="fas fa-vial-circle-check me-1"></i>Critical lab</span>';
+    else if (item.labSeverity === 1) labBadge = '<span class="triage-badge triage-lab-abnormal" title="Abnormal lab result"><i class="fas fa-vial me-1"></i>Abnormal lab</span>';
     var missN = (item.missingInfo || []).length, fuN = (item.followupQuestions || []).length;
     var missBadge = missN ? '<span class="triage-badge triage-badge-missing" title="Missing information"><i class="fas fa-circle-question me-1"></i>' + missN + ' missing</span>' : '';
     var fuBadge = fuN ? '<span class="triage-badge triage-badge-followup" title="Follow-up questions"><i class="fas fa-comments me-1"></i>' + fuN + ' follow-ups</span>' : '';
     var isPinned = pins.indexOf(item.code) >= 0;
+    var chips = missBadge + fuBadge + labBadge + fuHtml;
+    var metaBits = fmtDate(item.createdAt) + ' · ' + esc(item.package || item.scenario || item.facility || '—') + ' · ' + esc(item.narrative || '').slice(0, 60);
     html += '<div class="triage-queue-row triage-queue-row-risk-' + item.risk + '" draggable="true" data-code="' + esc(item.code) + '" title="Drag to reprioritize">'
       + '<div class="triage-queue-prio"><button class="triage-prio-btn" data-act="up" data-code="' + esc(item.code) + '" title="' + esc(t('queue.moveUp')) + '"><i class="fas fa-chevron-up"></i></button>'
       + '<button class="triage-prio-btn" data-act="down" data-code="' + esc(item.code) + '" title="' + esc(t('queue.moveDown')) + '"><i class="fas fa-chevron-down"></i></button></div>'
       + '<button class="triage-pin-btn' + (isPinned ? ' is-active' : '') + '" data-pin="' + esc(item.code) + '" title="' + (isPinned ? esc(t('queue.clearPin')) : esc(t('queue.moveTop'))) + '"><i class="fas fa-thumbtack"></i></button>'
-      + '<button class="triage-queue-row-head" data-code="' + esc(item.code) + '"><span class="triage-queue-dot" style="background:' + rm.color + '"></span><div class="triage-queue-main"><div class="triage-queue-title"><span class="triage-code">' + esc(item.code) + '</span> <span class="triage-badge triage-badge-risk-' + item.risk + '">' + esc(rm.label) + '</span> <span class="triage-badge triage-badge-status">' + esc(sm.label) + '</span>' + missBadge + fuBadge + labBadge + fuHtml + (item.patientName ? '<span class="triage-badge">Patient</span>' : '') + '</div><div class="triage-queue-meta">' + fmtDate(item.createdAt) + ' · ' + esc(item.package || item.scenario || item.facility || '—') + ' · ' + esc(item.narrative || '').slice(0, 60) + '</div></div><span class="triage-queue-score" style="color:' + rm.color + '">' + item.score + '</span></button>'
+      + '<button class="triage-queue-row-head" data-code="' + esc(item.code) + '"><span class="triage-queue-dot" style="background:' + rm.color + '"></span><div class="triage-queue-main"><div class="triage-queue-title"><span class="triage-code">' + esc(item.code) + '</span> <span class="triage-badge triage-badge-risk-' + item.risk + '">' + esc(rm.label) + '</span> <span class="triage-badge triage-badge-status">' + esc(sm.label) + '</span></div><div class="triage-queue-meta">' + (chips ? '<span class="triage-queue-chips">' + chips + '</span>' : '') + metaBits + '</div></div><span class="triage-queue-score" style="color:' + rm.color + '">' + item.score + '</span></button>'
       + (state.isStaff && state.batchBar ? '<label class="triage-queue-cb-wrap" title="Select for batch validation"><input type="checkbox" class="triage-queue-cb" data-code="' + esc(item.code) + '"' + (state.batchSelected[item.code] ? ' checked' : '') + '></label>' : '') + '</div>';
   });
   list.innerHTML = html;
@@ -1726,9 +1736,28 @@ function resetIntake() { if ($('#symptoms')) $('#symptoms').value = ''; if ($('#
 function bindThemeLogout() { /* placeholder — functions defined above */ }
 
 /* ---------- Hero stats ---------- */
+function heroStat(icon, label, value, color) {
+  return '<div class="triage-stat"><div class="triage-stat-label"><i class="fas ' + icon + '"></i> ' + label + '</div><div class="triage-stat-value"' + (color ? ' style="color:' + color + '"' : '') + '>' + value + '</div></div>';
+}
 function renderHeroStats() {
   var el = $('#hero-stats'); if (!el) return;
-  if (state.isStaff) { var items = mergedQueue(); var e = items.filter(function(i) { return i.risk === 'emergency'; }).length; var u = items.filter(function(i) { return i.risk === 'urgent'; }).length; var c = items.filter(function(i) { return i.status === 'completed'; }).length; el.innerHTML = '<div class="triage-stat"><div class="triage-stat-label"><i class="fas fa-clipboard-list"></i> Sessions</div><div class="triage-stat-value">' + items.length + '</div></div><div class="triage-stat"><div class="triage-stat-label"><i class="fas fa-exclamation-triangle"></i> Emergency</div><div class="triage-stat-value" style="color:#dc2626">' + e + '</div></div><div class="triage-stat"><div class="triage-stat-label"><i class="fas fa-triangle-exclamation"></i> Urgent</div><div class="triage-stat-value" style="color:#ea580c">' + u + '</div></div><div class="triage-stat"><div class="triage-stat-label"><i class="fas fa-circle-check"></i> Completed</div><div class="triage-stat-value" style="color:#10b981">' + c + '</div></div>'; } else { var ss = getSessions(); el.innerHTML = '<div class="triage-stat"><div class="triage-stat-label"><i class="fas fa-clipboard-list"></i> Sessions</div><div class="triage-stat-value">' + ss.length + '</div></div><div class="triage-stat"><div class="triage-stat-label"><i class="fas fa-wand-magic-sparkles"></i> Notes</div><div class="triage-stat-value">' + ss.filter(function(s) { return s.note; }).length + '</div></div><div class="triage-stat"><div class="triage-stat-label"><i class="fas fa-file-image"></i> OCR</div><div class="triage-stat-value">' + ss.filter(function(s) { return s.extractedTests && s.extractedTests.length; }).length + '</div></div><div class="triage-stat"><div class="triage-stat-label"><i class="fas fa-shield-halved"></i> Consent</div><div class="triage-stat-value">' + (localStorage.getItem('triage.consent.' + state.role) ? 'Yes' : 'No') + '</div></div>'; }
+  if (state.isStaff) {
+    el.innerHTML = heroStat('clipboard-list', 'Sessions', '&hellip;') + heroStat('exclamation-triangle', 'Emergency', '&hellip;') + heroStat('triangle-exclamation', 'Urgent', '&hellip;') + heroStat('circle-check', 'Completed', '&hellip;');
+    fetch('/api/analytics/summary', { credentials: 'include' })
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(d) {
+        if (!d || !d.kpis) throw new Error('no summary');
+        var k = d.kpis;
+        el.innerHTML = heroStat('clipboard-list', 'Sessions', k.sessions) + heroStat('exclamation-triangle', 'Emergency', k.emergency, '#dc2626') + heroStat('triangle-exclamation', 'Urgent', k.urgent, '#ea580c') + heroStat('circle-check', 'Completed', k.completed, '#10b981');
+      })
+      .catch(function() {
+        var items = mergedQueue();
+        var e = items.filter(function(i) { return i.risk === 'emergency'; }).length;
+        var u = items.filter(function(i) { return i.risk === 'urgent'; }).length;
+        var c = items.filter(function(i) { return i.status === 'completed'; }).length;
+        el.innerHTML = heroStat('clipboard-list', 'Sessions', items.length) + heroStat('exclamation-triangle', 'Emergency', e, '#dc2626') + heroStat('triangle-exclamation', 'Urgent', u, '#ea580c') + heroStat('circle-check', 'Completed', c, '#10b981');
+      });
+  } else { var ss = getSessions(); el.innerHTML = '<div class="triage-stat"><div class="triage-stat-label"><i class="fas fa-clipboard-list"></i> Sessions</div><div class="triage-stat-value">' + ss.length + '</div></div><div class="triage-stat"><div class="triage-stat-label"><i class="fas fa-wand-magic-sparkles"></i> Notes</div><div class="triage-stat-value">' + ss.filter(function(s) { return s.note; }).length + '</div></div><div class="triage-stat"><div class="triage-stat-label"><i class="fas fa-file-image"></i> OCR</div><div class="triage-stat-value">' + ss.filter(function(s) { return s.extractedTests && s.extractedTests.length; }).length + '</div></div><div class="triage-stat"><div class="triage-stat-label"><i class="fas fa-shield-halved"></i> Consent</div><div class="triage-stat-value">' + (localStorage.getItem('triage.consent.' + state.role) ? 'Yes' : 'No') + '</div></div>'; }
 }
 
 /* ---------- Boot ---------- */

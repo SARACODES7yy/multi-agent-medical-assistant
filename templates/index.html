@@ -55,20 +55,8 @@
                 </div>
             </div>
 
-            <div class="agent-group">
-                <div class="agent-group-title"><i class="fas fa-layer-group"></i> How It Works</div>
-                <div class="step"><span class="step-n">1</span> Ask a question or upload a report</div>
-                <div class="step"><span class="step-n">2</span> Agents route &amp; search the corpus</div>
-                <div class="step"><span class="step-n">3</span> Structured answer + review</div>
-            </div>
-
-            <div class="agent-group">
-                <div class="agent-group-title"><i class="fas fa-shield-heart"></i> Built for safety</div>
-                <div class="note">Every answer is checked at input and output. Image findings wait for a doctor's sign-off.</div>
-            </div>
-
             <div class="sidebar-bottom">
-                <a href="/dashboard" class="btn-outline w-100" id="dashboard-link" style="display:none;"><i class="fas fa-chart-line me-2"></i>Dashboard</a>
+                <a href="/home" class="btn-outline w-100" id="dashboard-link" style="display:none;"><i class="fas fa-clipboard-list me-2"></i>Triage workspace</a>
                 <a href="/profile" class="btn-outline w-100 mt-2" id="profile-health-link" style="display:none;"><i class="fas fa-notes-medical me-2"></i>Health Profile</a>
                 <button id="clear-chat" class="btn-clear w-100 mt-2">
                     <i class="fas fa-trash-alt me-2"></i> Clear Conversation
@@ -88,7 +76,7 @@
                 <div class="header-right">
                     <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme"><i class="theme-icon fas fa-moon"></i></button>
                     <span class="status-pill"><span class="live-dot"></span> Online</span>
-                    <a href="/dashboard" class="btn-outline btn-sm header-dash-link" id="header-dash-link" style="display:none;"><i class="fas fa-chart-line me-1"></i>Dashboard</a>
+                    <a href="/analytics" class="btn-outline btn-sm header-dash-link" id="header-dash-link" style="display:none;"><i class="fas fa-chart-pie me-1"></i>Analytics</a>
                     <a href="/profile" class="btn-outline btn-sm header-dash-link" id="header-health-link" style="display:none;"><i class="fas fa-notes-medical me-1"></i>Profile</a>
                     <a href="/home" class="btn-outline btn-sm header-dash-link" id="header-triage-link" style="display:none;"><i class="fas fa-clipboard-list me-1"></i>Triage</a>
                     <button class="btn-outline btn-sm" id="header-logout" onclick="doLogout()" style="display:none;"><i class="fas fa-sign-out-alt me-1"></i>Logout</button>
@@ -100,8 +88,20 @@
                     <svg class="wp-trace" viewBox="0 0 260 44" aria-hidden="true">
                         <path class="trace-path" d="M0 22 H92 L99 22 L104 8 L111 38 L118 20 L126 20 L132 22 H184 L191 22 L196 8 L203 38 L210 20 L218 20 L224 22 H260"/>
                     </svg>
-                    <h2>How can I help you?</h2>
-                    <p>Ask a medical question, or attach a report and read through it together. Your data stays private.</p>
+                    <h2 data-i18n="chat.welcomeTitle">How can I help you?</h2>
+                    <p data-i18n="chat.welcomeSub">Ask a medical question, or attach a report and read through it together. Your data stays private.</p>
+                    <div class="wp-examples">
+                        <button type="button" class="wp-example" data-i18n="chat.example1">What does a rising creatinine level mean?</button>
+                        <button type="button" class="wp-example" data-i18n="chat.example2">Summarise this blood report for my doctor</button>
+                        <button type="button" class="wp-example" data-i18n="chat.example3">When should a fever become an emergency?</button>
+                    </div>
+                    <div class="wp-how">
+                        <div class="wp-how-title" data-i18n="chat.howTitle"><i class="fas fa-layer-group"></i> How it works</div>
+                        <div class="step"><span class="step-n">1</span><span data-i18n="chat.step1">Ask a question or upload a report</span></div>
+                        <div class="step"><span class="step-n">2</span><span data-i18n="chat.step2">Agents route &amp; search the corpus</span></div>
+                        <div class="step"><span class="step-n">3</span><span data-i18n="chat.step3">Structured answer + review</span></div>
+                        <div class="note wp-note" data-i18n="chat.safetyNote">Every answer is checked at input and output. Image findings wait for a doctor's sign-off.</div>
+                    </div>
                 </div>
             </div>
 
@@ -128,6 +128,7 @@
     <script src="/static/js/i18n.js?v=1"></script>
     <script>
         const chatBody = document.getElementById('chat-body');
+        const WELCOME_HTML = chatBody.innerHTML;
         const chatForm = document.getElementById('chat-form');
         const messageInput = document.getElementById('message-input');
         const imageUpload = document.getElementById('image-upload');
@@ -168,7 +169,8 @@
                 document.getElementById('profile-actions').innerHTML = '<button class="btn-outline btn-sm" onclick="doLogout()">Logout</button>';
                 document.getElementById('header-logout').style.display = 'inline-flex';
                 document.getElementById('dashboard-link').style.display = 'flex';
-                document.getElementById('header-dash-link').style.display = 'inline-flex';
+                document.getElementById('header-triage-link').style.display = 'inline-flex';
+                if (u.role !== 'patient') document.getElementById('header-dash-link').style.display = 'inline-flex';
             } catch(ex) {}
         }
 
@@ -236,6 +238,7 @@
         else micBtn.style.display = 'none';
         micBtn.addEventListener('click', () => { if (isRecording) chatStopMic(); else chatStartMic(); });
 
+        if (typeof applyI18n === 'function') applyI18n();
         loadProfile();
 
         function renderHistory() {
@@ -250,8 +253,11 @@
                 } else {
                     const div = document.createElement('div');
                     div.className = 'message assistant-message';
-                    div.innerHTML = `<div class="agent-tag">${m.agent || 'Assistant'}</div><div>${marked.parse(m.content || '')}</div>`;
+                    div.innerHTML = `<div class="agent-tag">${m.agent || 'Assistant'}</div><div>${marked.parse(m.content || '')}</div>`
+                        + `<button class="listen-btn" title="Read aloud"><i class="fas fa-volume-high"></i></button>`
+                        + `<button class="listen-btn translate-btn" title="Translate"><i class="fas fa-language"></i></button>`;
                     chatBody.appendChild(div);
+                    bindAssistantActions(div, m.content || '');
                 }
             }
             chatBody.scrollTop = chatBody.scrollHeight;
@@ -301,8 +307,17 @@
         clearChatBtn.addEventListener('click', function() {
             chatMessages = [];
             localStorage.removeItem('medichat_history');
-            chatBody.innerHTML = `<div class="welcome-panel"><svg class="wp-trace" viewBox="0 0 260 44" aria-hidden="true"><path class="trace-path" d="M0 22 H92 L99 22 L104 8 L111 38 L118 20 L126 20 L132 22 H184 L191 22 L196 8 L203 38 L210 20 L218 20 L224 22 H260"/></svg><h2>How can I help you?</h2><p>Ask a medical question, or attach a report and read through it together. Your data stays private.</p></div>`;
+            chatBody.innerHTML = WELCOME_HTML;
+            if (typeof applyI18n === 'function') applyI18n();
             chatBody.scrollTop = 0;
+        });
+
+        chatBody.addEventListener('click', function(e) {
+            const ex = e.target.closest('.wp-example');
+            if (!ex) return;
+            messageInput.value = ex.textContent.trim();
+            messageInput.focus();
+            messageInput.dispatchEvent(new Event('input'));
         });
 
         chatForm.addEventListener('submit', async function(e) {
@@ -413,9 +428,12 @@
             chatBody.appendChild(div);
             chatMessages.push({ role: 'assistant', content: response, agent });
             localStorage.setItem('medichat_history', JSON.stringify(chatMessages.slice(-50)));
+            bindAssistantActions(div, response);
+        }
 
+        function bindAssistantActions(div, response) {
             const listenBtn = div.querySelector('.listen-btn');
-            listenBtn.addEventListener('click', () => {
+            if (listenBtn) listenBtn.addEventListener('click', () => {
                 if (window._speechPlaying) { speechSynthesis.cancel(); window._speechPlaying = false; listenBtn.classList.remove('playing'); return; }
                 const utterance = new SpeechSynthesisUtterance(response);
                 utterance.rate = 1.0;

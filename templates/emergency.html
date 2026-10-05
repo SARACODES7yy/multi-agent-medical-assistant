@@ -7,14 +7,16 @@
     <title>Emergency — Ambulance Request</title>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script>(function(){try{var s=localStorage.getItem('theme');var m=window.matchMedia('(prefers-color-scheme: light)').matches;var t=s||(m?'light':'dark');document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
         :root {
-            --bg: #0e1624; --card: #16202f; --line: #263449; --ink: #e8eef7;
-            --muted: #8ea0b8; --red: #e5484d; --red-dark: #b21f2a; --green: #35c27a;
-            --amber: #f5a623; --radius: 14px;
+            --card: var(--bg-raise, #16202f);
+            --muted: var(--ink-dim, #8ea0b8);
+            --red: #e5484d; --red-dark: #b21f2a; --green: #35c27a;
+            --radius: 14px;
         }
-        body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--ink); min-height: 100vh; }
+        html[data-theme="light"] { --green: #1f8a55; }
         .trial-banner { background: linear-gradient(90deg, #3a1114, #b21f2a); color: #fff; text-align: center; padding: 10px 16px; font-size: 13px; font-weight: 600; letter-spacing: .3px; }
         .trial-banner i { margin-right: 8px; }
         .wrap { max-width: 720px; margin: 0 auto; padding: 32px 18px 60px; }
@@ -23,20 +25,24 @@
         @keyframes pulse { 0%,100% { box-shadow: 0 0 0 8px rgba(229,72,77,.18), 0 0 30px rgba(229,72,77,.3); } 50% { box-shadow: 0 0 0 14px rgba(229,72,77,.08), 0 0 50px rgba(229,72,77,.5); } }
         .top h1 { font-family: 'IBM Plex Serif', serif; font-size: 28px; }
         .top p { color: var(--muted); margin-top: 6px; font-size: 14px; }
+        .em-back { display: inline-flex; align-items: center; gap: 6px; color: var(--red); font-weight: 600; font-size: 13px; text-decoration: none; background: none; font-family: inherit; padding: 6px 14px; border: 1px solid rgba(229,72,77,.45); border-radius: 99px; margin-top: 10px; cursor: pointer; transition: background .15s, border-color .15s; }
+        .em-back:hover { background: rgba(229,72,77,.1); border-color: var(--red); }
+        .em-back + .em-back { margin-left: 8px; }
         .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; margin-bottom: 18px; }
         .card h2 { font-size: 16px; margin-bottom: 14px; display: flex; align-items: center; gap: 9px; }
-        .loc-status { display: flex; align-items: center; gap: 10px; background: #101a29; border: 1px solid var(--line); border-radius: 10px; padding: 13px 15px; margin-bottom: 14px; }
+        .loc-status { display: flex; align-items: center; gap: 10px; background: var(--bg-raise, #101a29); border: 1px solid var(--line); border-radius: 10px; padding: 13px 15px; margin-bottom: 14px; }
         .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--amber); flex-shrink: 0; }
         .dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); }
         .dot.err { background: var(--red); }
         .loc-status .txt { font-size: 13.5px; color: var(--muted); flex: 1; }
         .loc-status .coords { font-family: monospace; font-size: 12.5px; color: var(--ink); }
         label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 5px; }
-        input, select, textarea { width: 100%; padding: 11px 13px; border-radius: 9px; border: 1px solid var(--line); background: #101a29; color: var(--ink); font-size: 14px; font-family: inherit; outline: none; }
+        input, select, textarea { width: 100%; padding: 11px 13px; border-radius: 9px; border: 1px solid var(--line); background: var(--bg-raise, #101a29); color: var(--ink); font-size: 14px; font-family: inherit; outline: none; }
         input:focus, select:focus, textarea:focus { border-color: var(--red); }
         textarea { resize: vertical; min-height: 64px; }
         select option { background: var(--card); }
         .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        @media (max-width: 560px) { .row { grid-template-columns: 1fr; } .wrap { padding: 22px 14px 48px; } }
         .btn { width: 100%; padding: 16px; border: none; border-radius: 12px; font-size: 17px; font-weight: 600; cursor: pointer; font-family: inherit; display: flex; align-items: center; justify-content: center; gap: 10px; transition: opacity .15s, transform .1s; }
         .btn:disabled { opacity: .55; cursor: not-allowed; }
         .btn:active:not(:disabled) { transform: scale(.985); }
@@ -48,7 +54,7 @@
         .ok-box { text-align: center; padding: 12px 4px; }
         .ok-box .big { font-size: 44px; color: var(--green); margin-bottom: 10px; }
         .ok-box h2 { color: var(--green); font-size: 20px; margin-bottom: 8px; }
-        .ok-box .reqid { display: inline-block; margin-top: 14px; padding: 8px 16px; background: #101a29; border: 1px solid var(--line); border-radius: 9px; font-family: monospace; font-size: 14px; color: var(--amber); }
+        .ok-box .reqid { display: inline-block; margin-top: 14px; padding: 8px 16px; background: var(--bg-raise, #101a29); border: 1px solid var(--line); border-radius: 9px; font-family: monospace; font-size: 14px; color: var(--amber); }
         .ok-box .note { color: var(--muted); font-size: 13px; margin-top: 16px; }
         .mapbox { margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; height: 210px; }
         .mapbox iframe { width: 100%; height: 100%; border: 0; }
@@ -66,6 +72,10 @@
             <div class="siren"><i class="fas fa-truck-medical"></i></div>
             <h1>Ambulance Request</h1>
             <p>Share your live location and request an ambulance. No login needed.</p>
+            <p>
+                <a href="/home" class="em-back"><i class="fas fa-arrow-left"></i> Back to MediAssist</a>
+                <button type="button" class="em-back" onclick="toggleTheme()" title="Toggle theme" aria-label="Toggle theme"><i class="fas fa-moon"></i></button>
+            </p>
         </div>
 
         <div id="errline" class="hidden"></div>
@@ -131,6 +141,7 @@
     </div>
 
     <script>
+        function toggleTheme() { var cur = document.documentElement.getAttribute('data-theme'); var nxt = cur === 'light' ? 'dark' : 'light'; document.documentElement.setAttribute('data-theme', nxt); try { localStorage.setItem('theme', nxt); } catch (e) {} var i = document.querySelector('.em-back .fa-moon, .em-back .fa-sun'); if (i) i.className = nxt === 'light' ? 'fas fa-moon' : 'fas fa-sun'; }
         (function () {
             var livePos = null;
             var watchId = null;
