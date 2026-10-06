@@ -1709,6 +1709,16 @@ async function createInvoice(itemId, patientId) {
 function bindActions() {
   // tabs
   $$('.triage-tab').forEach(function(t) { t.addEventListener('click', function() { switchTab(t.getAttribute('data-tab')); }); });
+  // tab keyboard navigation (arrows / home / end)
+  var tabs = $$('.triage-tab');
+  tabs.forEach(function(t, i) {
+    t.addEventListener('keydown', function(e) {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); var n = (i + 1) % tabs.length; tabs[n].focus(); switchTab(tabs[n].getAttribute('data-tab')); }
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); var p = (i - 1 + tabs.length) % tabs.length; tabs[p].focus(); switchTab(tabs[p].getAttribute('data-tab')); }
+      else if (e.key === 'Home') { e.preventDefault(); tabs[0].focus(); switchTab(tabs[0].getAttribute('data-tab')); }
+      else if (e.key === 'End') { e.preventDefault(); tabs[tabs.length - 1].focus(); switchTab(tabs[tabs.length - 1].getAttribute('data-tab')); }
+    });
+  });
   // facility change
   var ft = $('#facility-type'); if (ft) ft.addEventListener('change', onFacilityChange);
   // consent toggle
@@ -1721,7 +1731,7 @@ function bindActions() {
   ['filter-status', 'filter-risk'].forEach(function(id) { var el = document.getElementById(id); if (el) el.addEventListener('change', renderQueue); });
 }
 function switchTab(name) {
-  $$('.triage-tab').forEach(function(t) { t.classList.toggle('is-active', t.getAttribute('data-tab') === name); });
+  $$('.triage-tab').forEach(function(t) { t.classList.toggle('is-active', t.getAttribute('data-tab') === name); t.setAttribute('aria-selected', t.getAttribute('data-tab') === name ? 'true' : 'false'); });
   $$('.triage-tabpanel').forEach(function(p) { p.classList.toggle('is-active', p.id === 'tab-' + name); });
   if (name === 'reviewer') { refreshQueue(); if (state.isStaff) loadInvoices(); }
   if (name === 'analytics') renderAnalytics();

@@ -5,12 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MediAssist AI</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🩺</text></svg>">
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link rel="stylesheet" href="/static/css/style.css">
     <script>(function(){try{var s=localStorage.getItem('theme');var m=window.matchMedia('(prefers-color-scheme: light)').matches;var t=s||(m?'light':'dark');document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 </head>
 <body>
+    <a href="#chat-body" class="skip-link">Skip to conversation</a>
     <div class="app-layout">
         <aside class="sidebar">
             <div class="sidebar-head">
@@ -83,7 +84,7 @@
                 </div>
             </header>
 
-            <div id="chat-body" class="chat-body">
+            <div id="chat-body" class="chat-body" role="log" aria-label="Conversation" tabindex="-1">
                 <div class="welcome-panel">
                     <svg class="wp-trace" viewBox="0 0 260 44" aria-hidden="true">
                         <path class="trace-path" d="M0 22 H92 L99 22 L104 8 L111 38 L118 20 L126 20 L132 22 H184 L191 22 L196 8 L203 38 L210 20 L218 20 L224 22 H260"/>
@@ -110,16 +111,16 @@
                     <img id="preview-image" class="composer-preview-img" src="">
                     <span id="preview-file-icon" class="composer-preview-file-icon" style="display:none;"><i class="fas fa-file-pdf"></i></span>
                     <span class="composer-preview-name" id="preview-name"></span>
-                    <button type="button" class="composer-preview-remove" id="remove-image" title="Remove"><i class="fas fa-times"></i></button>
+                    <button type="button" class="composer-preview-remove" id="remove-image" title="Remove" aria-label="Remove attachment"><i class="fas fa-times"></i></button>
                 </div>
                 <form id="chat-form" class="composer">
-                    <button type="button" class="composer-attach" id="attach-btn" title="Attach image or PDF"><i class="fas fa-plus"></i></button>
-                    <button type="button" class="mic-btn" id="mic-btn" title="Voice input" style="display:none;"><i class="fas fa-microphone"></i></button>
+                    <button type="button" class="composer-attach" id="attach-btn" title="Attach image or PDF" aria-label="Attach image or PDF"><i class="fas fa-plus"></i></button>
+                    <button type="button" class="mic-btn" id="mic-btn" title="Voice input" aria-label="Voice input" style="display:none;"><i class="fas fa-microphone"></i></button>
                     <input type="file" id="image-upload" accept="image/*,application/pdf,.pdf" hidden>
-                    <textarea id="message-input" class="composer-input" rows="1" placeholder="Ask a medical question…"></textarea>
-                    <button type="submit" class="composer-send" title="Send"><i class="fas fa-arrow-up"></i></button>
+                    <textarea id="message-input" class="composer-input" rows="1" placeholder="Ask a medical question…" aria-label="Message"></textarea>
+                    <button type="submit" class="composer-send" title="Send" aria-label="Send message"><i class="fas fa-arrow-up"></i></button>
                 </form>
-                <div class="composer-hint">MediAssist can make mistakes. Verify important info.</div>
+                <div class="composer-hint">MediAssist can make mistakes. Verify important info.<span class="d-none d-sm-inline"> <span aria-hidden="true">·</span> <span class="kbd">Enter</span> to send, <span class="kbd">Shift</span>+<span class="kbd">Enter</span> new line</span></div>
             </div>
         </main>
     </div>
@@ -254,8 +255,8 @@
                     const div = document.createElement('div');
                     div.className = 'message assistant-message';
                     div.innerHTML = `<div class="agent-tag">${m.agent || 'Assistant'}</div><div>${marked.parse(m.content || '')}</div>`
-                        + `<button class="listen-btn" title="Read aloud"><i class="fas fa-volume-high"></i></button>`
-                        + `<button class="listen-btn translate-btn" title="Translate"><i class="fas fa-language"></i></button>`;
++ `<button class="listen-btn" title="Read aloud" aria-label="Read aloud"><i class="fas fa-volume-high"></i></button>`
++ `<button class="listen-btn translate-btn" title="Translate" aria-label="Translate"><i class="fas fa-language"></i></button>`;
                     chatBody.appendChild(div);
                     bindAssistantActions(div, m.content || '');
                 }
@@ -278,6 +279,28 @@
             this.style.height = 'auto';
             this.style.height = Math.min(this.scrollHeight, 120) + 'px';
         });
+
+        // Enter sends, Shift+Enter inserts a newline
+        messageInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+                e.preventDefault();
+                chatForm.requestSubmit();
+            }
+        });
+
+        // '/' focuses the composer from anywhere
+        document.addEventListener('keydown', function(e) {
+            const tag = (e.target.tagName || '').toLowerCase();
+            if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+            if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable) return;
+            e.preventDefault();
+            messageInput.focus();
+        });
+
+        // Focus composer on desktop when the conversation is empty
+        if (chatMessages.length === 0 && window.matchMedia('(min-width: 768px)').matches) {
+            messageInput.focus();
+        }
 
         document.getElementById('attach-btn').addEventListener('click', () => imageUpload.click());
         imageUpload.addEventListener('change', function(e) {

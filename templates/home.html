@@ -93,24 +93,24 @@
 
     <!-- Tabs -->
     <main class="triage-main">
-        <div class="triage-tabs" role="tablist">
-            <button class="triage-tab is-active" data-tab="intake" role="tab"><i class="fas fa-clipboard-list me-1"></i><span data-i18n="tab.intake">Triage Intake</span></button>
+        <div class="triage-tabs" role="tablist" aria-label="Workspace tabs">
+            <button class="triage-tab is-active" data-tab="intake" role="tab" aria-selected="true" aria-controls="tab-intake"><i class="fas fa-clipboard-list me-1"></i><span data-i18n="tab.intake">Triage Intake</span></button>
             {% if role in ('doctor', 'nurse') %}
-            <button class="triage-tab" data-tab="reviewer" role="tab"><i class="fas fa-eye me-1"></i><span data-i18n="tab.reviewer">Reviewer</span> <span class="triage-tab-count" id="reviewer-badge" style="display:none;"></span></button>
-            <button class="triage-tab" data-tab="analytics" role="tab"><i class="fas fa-chart-pie me-1"></i><span data-i18n="tab.analytics">Analytics</span></button>
-            <button class="triage-tab" data-tab="audit" role="tab"><i class="fas fa-scroll me-1"></i><span data-i18n="tab.audit">Audit Trail</span></button>
-            <button class="triage-tab" data-tab="history" role="tab"><i class="fas fa-history me-1"></i><span data-i18n="tab.historyStaff">Patient History</span></button>
+            <button class="triage-tab" data-tab="reviewer" role="tab" aria-selected="false" aria-controls="tab-reviewer"><i class="fas fa-eye me-1"></i><span data-i18n="tab.reviewer">Reviewer</span> <span class="triage-tab-count" id="reviewer-badge" style="display:none;"></span></button>
+            <button class="triage-tab" data-tab="analytics" role="tab" aria-selected="false" aria-controls="tab-analytics"><i class="fas fa-chart-pie me-1"></i><span data-i18n="tab.analytics">Analytics</span></button>
+            <button class="triage-tab" data-tab="audit" role="tab" aria-selected="false" aria-controls="tab-audit"><i class="fas fa-scroll me-1"></i><span data-i18n="tab.audit">Audit Trail</span></button>
+            <button class="triage-tab" data-tab="history" role="tab" aria-selected="false" aria-controls="tab-history"><i class="fas fa-history me-1"></i><span data-i18n="tab.historyStaff">Patient History</span></button>
             {% endif %}
             {% if role == 'patient' %}
-            <button class="triage-tab" data-tab="history" role="tab"><i class="fas fa-history me-1"></i><span data-i18n="tab.historyPatient">My Follow-ups</span></button>
-            <button class="triage-tab" data-tab="records" role="tab"><i class="fas fa-folder-open me-1"></i><span data-i18n="tab.records">My Records</span><span class="triage-tab-count" id="records-badge" style="display:none;"></span></button>
+            <button class="triage-tab" data-tab="history" role="tab" aria-selected="false" aria-controls="tab-history"><i class="fas fa-history me-1"></i><span data-i18n="tab.historyPatient">My Follow-ups</span></button>
+            <button class="triage-tab" data-tab="records" role="tab" aria-selected="false" aria-controls="tab-records"><i class="fas fa-folder-open me-1"></i><span data-i18n="tab.records">My Records</span><span class="triage-tab-count" id="records-badge" style="display:none;"></span></button>
             {% endif %}
-            <button class="triage-tab" data-tab="book-call" role="tab"><i class="fas fa-phone me-1"></i><span data-i18n="tab.bookCall">Book Call</span></button>
-            <button class="triage-tab" data-tab="about" role="tab"><i class="fas fa-circle-info me-1"></i><span data-i18n="tab.about">About &amp; Privacy</span></button>
+            <button class="triage-tab" data-tab="book-call" role="tab" aria-selected="false" aria-controls="tab-book-call"><i class="fas fa-phone me-1"></i><span data-i18n="tab.bookCall">Book Call</span></button>
+            <button class="triage-tab" data-tab="about" role="tab" aria-selected="false" aria-controls="tab-about"><i class="fas fa-circle-info me-1"></i><span data-i18n="tab.about">About &amp; Privacy</span></button>
         </div>
 
         <!-- INTAKE -->
-        <section class="triage-tabpanel is-active" id="tab-intake">
+        <section class="triage-tabpanel is-active" role="tabpanel" id="tab-intake">
             <div id="scenario-banner" class="triage-scenario-banner" style="display:none;">
                 <div class="triage-scenario-banner-head"><i class="fas fa-route"></i><span data-i18n="scenario.bannerTitle">Scenario workflow</span><span id="scenario-banner-name" class="triage-badge triage-badge-status" style="margin-left:auto;"></span></div>
                 <div class="triage-scenario-sub" data-i18n="scenario.ask">Suggested questions for this scenario</div>
@@ -224,7 +224,7 @@
 
         <!-- REVIEWER -->
         {% if role in ('doctor', 'nurse') %}
-        <section class="triage-tabpanel" id="tab-reviewer">
+        <section class="triage-tabpanel" role="tabpanel" id="tab-reviewer">
             <div class="triage-card">
                 <div class="triage-card-head triage-card-head-row">
                     <div>
@@ -349,7 +349,7 @@
         </section>
 
         <!-- ANALYTICS -->
-        <section class="triage-tabpanel" id="tab-analytics">
+        <section class="triage-tabpanel" role="tabpanel" id="tab-analytics">
             <div class="triage-card-head triage-card-head-row" style="margin-bottom:14px;">
                 <div>
                     <h3 data-i18n="analytics.title"><i class="fas fa-chart-pie me-2"></i>Analytics Dashboard</h3>
@@ -361,7 +361,7 @@
         </section>
 
         <!-- AUDIT -->
-        <section class="triage-tabpanel" id="tab-audit">
+        <section class="triage-tabpanel" role="tabpanel" id="tab-audit">
             <div class="triage-card">
                 <div class="triage-card-head">
                     <h3><i class="fas fa-scroll me-2 triage-violet"></i>Audit Trail</h3>
@@ -372,19 +372,19 @@
         </section>
 
         <!-- PATIENT HISTORY -->
-        <section class="triage-tabpanel" id="tab-history">
+        <section class="triage-tabpanel" role="tabpanel" id="tab-history">
             <div id="history-content"></div>
         </section>
         {% endif %}
 
         <!-- PATIENT MY FOLLOW-UPS -->
         {% if role == 'patient' %}
-        <section class="triage-tabpanel" id="tab-history">
+        <section class="triage-tabpanel" role="tabpanel" id="tab-history">
             <div id="history-content"></div>
         </section>
 
         <!-- PATIENT MY RECORDS -->
-        <section class="triage-tabpanel" id="tab-records">
+        <section class="triage-tabpanel" role="tabpanel" id="tab-records">
             <div class="triage-card">
                 <div class="triage-card-head triage-card-head-row">
                     <div>
@@ -399,7 +399,7 @@
         {% endif %}
 
         <!-- BOOK CALL -->
-        <section class="triage-tabpanel" id="tab-book-call">
+        <section class="triage-tabpanel" role="tabpanel" id="tab-book-call">
             <div class="triage-card">
                 <div class="triage-card-head">
                     <h3><i class="fas fa-phone me-2 triage-teal"></i>Book a Call</h3>
@@ -410,7 +410,7 @@
         </section>
 
         <!-- ABOUT -->
-        <section class="triage-tabpanel" id="tab-about">
+        <section class="triage-tabpanel" role="tabpanel" id="tab-about">
             <div class="space-y-4">
                 <div class="triage-card">
                     <div class="triage-card-head">

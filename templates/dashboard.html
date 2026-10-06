@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MediAssist AI — Dashboard</title>
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link rel="stylesheet" href="/static/css/style.css">
     <script>(function(){try{var s=localStorage.getItem('theme');var m=window.matchMedia('(prefers-color-scheme: light)').matches;var t=s||(m?'light':'dark');document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
@@ -68,19 +68,19 @@
                 <div class="dash-card-head">
                     <h3><i class="fas fa-heartbeat me-2"></i>Preventive Health</h3>
                 </div>
-                <div id="checkup-content"><p style="color:#8294a6;font-size:13px;">Loading...</p></div>
+                <div id="checkup-content"><p style="color:var(--ink-faint);font-size:13px;">Loading...</p></div>
             </div>
 
             <!-- Doctor instructions -->
             <div class="dash-card">
                 <h3><i class="fas fa-user-md me-2"></i>Doctor's Instructions</h3>
-                <div id="instr-content"><p style="color:#96a0bd;font-size:13px;">Loading...</p></div>
+                <div id="instr-content"><p style="color:var(--ink-dim);font-size:13px;">Loading...</p></div>
             </div>
 
             <!-- Doctor-only checkup requests -->
             <div class="dash-card" id="checkup-requests-card" style="display:none;">
                 <h3><i class="fas fa-stethoscope me-2"></i>Checkup Requests</h3>
-                <div id="checkup-requests-content"><p style="color:#96a0bd;font-size:13px;">Loading...</p></div>
+                <div id="checkup-requests-content"><p style="color:var(--ink-dim);font-size:13px;">Loading...</p></div>
             </div>
 
             <!-- Chat history -->
@@ -89,7 +89,7 @@
                     <h3><i class="fas fa-history me-2"></i>Recent Consultations</h3>
                     <a href="/" class="btn-outline btn-sm"><i class="fas fa-comments me-1"></i>New Chat</a>
                 </div>
-                <div id="chat-content"><p style="color:#96a0bd;font-size:13px;">Loading...</p></div>
+                <div id="chat-content"><p style="color:var(--ink-dim);font-size:13px;">Loading...</p></div>
             </div>
 
             <!-- Doctor-only instruction composer -->
@@ -134,8 +134,8 @@
                 document.getElementById('profile-content').innerHTML = `<p><b>Qualification:</b> ${u.qualification || '-'}</p>`;
                 document.querySelector('#instruction-card').style.display = 'block';
                 await loadDoctorPatients();
-                document.getElementById('instr-content').innerHTML = '<p style="color:#96a0bd;font-size:13px;">Instructions you have written will appear here for patients.</p>';
-                document.getElementById('chat-content').innerHTML = '<p style="color:#96a0bd;font-size:13px;">Chat history is for patient accounts.</p>';
+                document.getElementById('instr-content').innerHTML = '<p style="color:var(--ink-dim);font-size:13px;">Instructions you have written will appear here for patients.</p>';
+                document.getElementById('chat-content').innerHTML = '<p style="color:var(--ink-dim);font-size:13px;">Chat history is for patient accounts.</p>';
                 loadDoctorCheckups();
             }
         }
@@ -146,7 +146,7 @@
             for (const k of ['name','dob','id_type','id_number','medical_history','allergies','conditions','treatments']) {
                 if (u[k]) html += `<p><b>${labels[k]}:</b> ${u[k]}</p>`;
             }
-            document.getElementById('profile-content').innerHTML = html || '<p style="color:#96a0bd;font-size:13px;">No profile details yet. Click Edit to add your medical history.</p>';
+            document.getElementById('profile-content').innerHTML = html || '<p style="color:var(--ink-dim);font-size:13px;">No profile details yet. Click Edit to add your medical history.</p>';
 
             // Prefill edit form
             document.getElementById('pe-name').value = u.name || '';
@@ -183,13 +183,13 @@
                 const r = await fetch('/api/profile', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body), credentials:'include' });
                 const d = await r.json();
                 if (r.ok) {
-                    st.textContent = 'Saved!'; st.style.color = '#38BFA0';
+                    st.textContent = 'Saved!'; st.style.color = 'var(--trace-ink)';
                     const me = await (await fetch('/me', { credentials:'include' })).json();
                     currentUser = me.user;
                     renderProfile(me.user);
                     toggleEdit();
-                } else { st.textContent = d.detail || 'Failed'; st.style.color = '#f87171'; }
-            } catch(ex) { st.textContent = 'Error'; st.style.color = '#f87171'; }
+                } else { st.textContent = d.detail || 'Failed'; st.style.color = 'var(--danger)'; }
+            } catch(ex) { st.textContent = 'Error'; st.style.color = 'var(--danger)'; }
             setTimeout(() => { st.textContent = ''; }, 2500);
             btn.disabled = false;
         }
@@ -199,7 +199,7 @@
             const d = await r.json();
             const list = d.instructions || [];
             const box = document.getElementById('instr-content');
-            if (!list.length) { box.innerHTML = '<p style="color:#96a0bd;font-size:13px;">No doctor instructions yet.</p>'; return; }
+            if (!list.length) { box.innerHTML = '<p style="color:var(--ink-dim);font-size:13px;">No doctor instructions yet.</p>'; return; }
             box.innerHTML = list.map(i => `
                 <div class="timeline-item">
                     <div class="timeline-text">${i.instruction_text}</div>
@@ -212,7 +212,7 @@
             const d = await r.json();
             const msgs = d.messages || [];
             const box = document.getElementById('chat-content');
-            if (!msgs.length) { box.innerHTML = '<p style="color:#8294a6;font-size:13px;">No consultations yet. <a href="/" style="color:#1F8A72;">Start a conversation</a></p>'; return; }
+            if (!msgs.length) { box.innerHTML = '<p style="color:var(--ink-faint);font-size:13px;">No consultations yet. <a href="/" style="color:var(--trace-ink);">Start a conversation</a></p>'; return; }
             const recent = msgs.slice(-8);
             box.innerHTML = recent.map(m => `
                 <div class="chat-line ${m.role === 'user' ? 'chat-user' : 'chat-assistant'}">
@@ -255,7 +255,7 @@
 
             if (d.has_completed) {
                 const date = d.latest && d.latest.created_at;
-                box.innerHTML = `<p style="color:#38BFA0;margin:0;"><i class="fas fa-check-circle me-1"></i><b>Last full body checkup:</b> ${date ? new Date(date).toLocaleDateString(undefined,{year:'numeric',month:'long',day:'numeric'}) : 'completed'}</p>`;
+                box.innerHTML = `<p style="color:var(--trace-ink);margin:0;"><i class="fas fa-check-circle me-1"></i><b>Last full body checkup:</b> ${date ? new Date(date).toLocaleDateString(undefined,{year:'numeric',month:'long',day:'numeric'}) : 'completed'}</p>`;
                 return;
             }
             if (d.pending) {
@@ -264,14 +264,14 @@
                     <div class="timeline-item">
                         <div class="timeline-text"><b>Full Body Checkup — ${label}</b></div>
                         <div class="timeline-meta"><i class="fas fa-heartbeat"></i> ${new Date(d.pending.requested_at).toLocaleString()}${d.pending.preferred_date ? ' · Preferred date: ' + d.pending.preferred_date : ''}</div>
-                        <p style="color:#8294a6;font-size:13px;margin:8px 0 0;">Your care team is following up to schedule this for you.</p>
+                        <p style="color:var(--ink-faint);font-size:13px;margin:8px 0 0;">Your care team is following up to schedule this for you.</p>
                     </div>`;
                 return;
             }
             box.innerHTML = `
                 <div class="nudge">
                     <p style="margin:0;"><i class="fas fa-heartbeat me-1"></i><b>No recent full-body health checkup on record.</b></p>
-                    <p style="font-size:13px;color:#8294a6;margin:8px 0 12px;">A regular checkup helps catch issues early. Opt in and your care team will contact you to schedule it.</p>
+                    <p style="font-size:13px;color:var(--ink-faint);margin:8px 0 12px;">A regular checkup helps catch issues early. Opt in and your care team will contact you to schedule it.</p>
                     <div id="checkup-form" style="display:none;margin-bottom:12px;">
                         <div class="row">
                             <div class="col">
@@ -297,7 +297,7 @@
         async function submitCheckup() {
             const st = document.getElementById('cu-status');
             st.textContent = 'Sending...';
-            st.style.color = '#8294a6';
+            st.style.color = 'var(--ink-faint)';
             const body = {
                 package: document.getElementById('cu-package').value,
                 preferred_date: document.getElementById('cu-date').value || null,
@@ -308,9 +308,9 @@
                     method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body), credentials:'include'
                 });
                 const d = await r.json();
-                if (r.ok) { st.textContent = 'Requested!'; st.style.color = '#38BFA0'; renderCheckup(); }
-                else { st.textContent = d.detail || 'Failed'; st.style.color = '#f87171'; }
-            } catch(ex) { st.textContent = 'Error'; st.style.color = '#f87171'; }
+                if (r.ok) { st.textContent = 'Requested!'; st.style.color = 'var(--trace-ink)'; renderCheckup(); }
+                else { st.textContent = d.detail || 'Failed'; st.style.color = 'var(--danger)'; }
+            } catch(ex) { st.textContent = 'Error'; st.style.color = 'var(--danger)'; }
         }
 
         async function loadDoctorCheckups() {
@@ -321,7 +321,7 @@
             if (!r.ok) return;
             card.style.display = 'block';
             const items = (d.checkups || []).filter(c => c.status === 'requested' || c.status === 'scheduled');
-            if (!items.length) { box.innerHTML = '<p style="color:#96a0bd;font-size:13px;">No pending checkup requests.</p>'; return; }
+            if (!items.length) { box.innerHTML = '<p style="color:var(--ink-dim);font-size:13px;">No pending checkup requests.</p>'; return; }
             box.innerHTML = items.map(c => `
                 <div class="timeline-item">
                     <div class="timeline-text"><b>${esc(c.patient_name || c.patient_id)}</b> — Full Body Checkup</div>
@@ -360,10 +360,10 @@
                 const r = await fetch('/patient/instruction', { method:'POST', body:fd, credentials:'include' });
                 const d = await r.json();
                 st.textContent = d.status === 'success' ? 'Instruction sent!' : 'Failed';
-                st.style.color = d.status === 'success' ? '#38BFA0' : '#f87171';
+                st.style.color = d.status === 'success' ? 'var(--trace-ink)' : 'var(--danger)';
                 document.getElementById('instr-text').value = '';
                 if (d.status === 'success') loadDoctorPatients();
-            } catch(ex) { st.textContent = 'Error'; st.style.color='#f87171'; }
+            } catch(ex) { st.textContent = 'Error'; st.style.color='var(--danger)'; }
             btn.disabled = false;
         }
 

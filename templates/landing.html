@@ -6,13 +6,14 @@
     <title>MediAssist AI — Triage notes, ready for human review</title>
     <meta name="description" content="A multi-agent clinical assistant that organizes symptoms, reports and scans into structured notes for qualified human review.">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🩺</text></svg>">
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link rel="stylesheet" href="/static/css/style.css">
     <link rel="stylesheet" href="/static/css/landing.css">
     <script>(function(){try{var s=localStorage.getItem('theme');var m=window.matchMedia('(prefers-color-scheme: light)').matches;document.documentElement.setAttribute('data-theme',s||(m?'light':'dark'));}catch(e){}document.documentElement.classList.add('js');})();</script>
 </head>
 <body class="lp">
+    <a href="#agents" class="skip-link">Skip to content</a>
     <div class="lp-progress" id="progress"></div>
 
     <nav class="lp-nav" id="nav">
@@ -72,7 +73,7 @@
         </div>
     </div>
 
-    <section class="section" id="agents">
+    <section class="section" id="agents" tabindex="-1">
         <div class="wrap">
             <div class="section-head reveal"><span class="eyebrow">The agents</span>
                 <h2 class="serif">One question in. The right specialist answers.</h2>

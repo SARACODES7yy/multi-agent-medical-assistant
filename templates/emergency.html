@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex, nofollow">
     <title>Emergency — Ambulance Request</title>
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link rel="stylesheet" href="/static/css/style.css">
     <script>(function(){try{var s=localStorage.getItem('theme');var m=window.matchMedia('(prefers-color-scheme: light)').matches;var t=s||(m?'light':'dark');document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
@@ -78,14 +78,14 @@
             </p>
         </div>
 
-        <div id="errline" class="hidden"></div>
+        <div id="errline" class="hidden" role="alert"></div>
 
         <!-- Step 1: live location -->
         <div class="card">
             <h2><i class="fas fa-location-dot" style="color:var(--red);"></i> Live Location</h2>
             <div class="loc-status">
                 <span class="dot" id="livedot"></span>
-                <span class="txt" id="loctxt">Waiting to detect your location…</span>
+                <span class="txt" id="loctxt" role="status">Waiting to detect your location…</span>
                 <span class="coords" id="locoords"></span>
             </div>
             <div class="mapbox hidden" id="mapbox"></div>
@@ -96,15 +96,15 @@
             <h2><i class="fas fa-clipboard-list" style="color:var(--red);"></i> Details</h2>
             <div class="row">
                 <div>
-                    <label>Your name</label>
-                    <input type="text" id="fname" maxlength="80" placeholder="Full name">
+                    <label for="fname">Your name</label>
+                    <input type="text" id="fname" maxlength="80" placeholder="Full name" autocomplete="name">
                 </div>
                 <div>
-                    <label>Phone</label>
-                    <input type="tel" id="fphone" maxlength="20" placeholder="+91 …">
+                    <label for="fphone">Phone</label>
+                    <input type="tel" id="fphone" maxlength="20" placeholder="+91 …" autocomplete="tel">
                 </div>
             </div>
-            <label>Emergency type</label>
+            <label for="ftype">Emergency type</label>
             <select id="ftype">
                 <option value="Cardiac / Chest pain">Cardiac / Chest pain</option>
                 <option value="Accident / Trauma">Accident / Trauma</option>
@@ -115,7 +115,7 @@
                 <option value="Pregnancy emergency">Pregnancy emergency</option>
                 <option value="Other emergency">Other / Not sure</option>
             </select>
-            <label>Notes (optional)</label>
+            <label for="fnotes">Notes (optional)</label>
             <textarea id="fnotes" maxlength="200" placeholder="Anything the crew should know…"></textarea>
             <div style="margin-top:18px;">
                 <button class="btn btn-request" id="sendbtn"><i class="fas fa-truck-medical"></i> Request Ambulance</button>

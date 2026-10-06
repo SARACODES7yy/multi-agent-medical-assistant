@@ -1,6 +1,6 @@
 /* ============================================================
    MediAssist — Triage page (port of the reference triage UI)
-   Extends style.css tokens ("Night Ward Monitor").
+   Extends style.css tokens ("chart-paper & theatre").
    ============================================================ */
 
 /* ---------- Layout ---------- */
@@ -57,10 +57,11 @@
 .triage-stat {
     border: 1px solid var(--line); border-radius: var(--r-md);
     background: var(--bg-raise); padding: 10px 12px;
+    transition: border-color .15s var(--ease), transform .06s var(--ease);
 }
 .triage-stat-label { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: .03em; }
 .triage-stat-label i { font-size: 11px; color: var(--trace); }
-.triage-stat-value { font-size: 22px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; margin-top: 2px; }
+.triage-stat-value { font-size: 22px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; margin-top: 2px; font-family: var(--font-mono); }
 .triage-stat-sub { font-size: 10px; color: var(--ink-faint); margin-top: 1px; }
 
 /* ---------- Facility card ---------- */
@@ -76,16 +77,24 @@
 
 /* ---------- Tabs ---------- */
 .triage-main { flex: 1; max-width: 1200px; margin: 0 auto; width: 100%; padding: 18px 16px 30px; }
-.triage-tabs { display: flex; flex-wrap: wrap; gap: 4px; background: var(--bg-raise); border: 1px solid var(--line); border-radius: var(--r-md); padding: 4px; margin-bottom: 20px; }
+.triage-tabs {
+    display: flex; flex-wrap: wrap; gap: 4px;
+    background: color-mix(in srgb, var(--bg-raise) 92%, transparent);
+    border: 1px solid var(--line); border-radius: var(--r-md); padding: 4px;
+    margin-bottom: 20px;
+    position: sticky; top: 0; z-index: 25;
+    backdrop-filter: blur(10px);
+}
 .triage-tab {
     display: inline-flex; align-items: center; gap: 6px; position: relative;
     background: transparent; border: 0; color: var(--ink-dim);
     font-family: inherit; font-size: 13px; font-weight: 500;
     padding: 8px 14px; border-radius: var(--r-xs); cursor: pointer;
-    transition: color .15s, background .15s;
+    transition: color .15s, background .15s, transform .06s var(--ease);
 }
 .triage-tab:hover { color: var(--ink); }
-.triage-tab.is-active { background: var(--trace-bg); color: var(--trace-ink); }
+.triage-tab.is-active, .triage-tab[aria-selected="true"] { background: var(--trace-bg); color: var(--trace-ink); }
+.triage-tab:active:not(:disabled) { transform: translateY(1px); }
 .triage-tab-count {
     min-width: 17px; height: 17px; padding: 0 5px; border-radius: 99px;
     background: var(--danger); color: #fff; font-size: 10px; font-weight: 700;
@@ -306,11 +315,27 @@
 .triage-badge-flags { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
 
 /* ---------- Skeleton / empty ---------- */
-.triage-skeleton div { height: 54px; border-radius: var(--r-md); background: var(--bg-raise2); margin-bottom: 8px; animation: pulse 1.4s infinite; }
-@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
-.triage-empty { text-align: center; padding: 40px 12px; color: var(--ink-faint); border: 1px dashed var(--line); border-radius: var(--r-md); }
-.triage-empty i { font-size: 26px; margin-bottom: 10px; opacity: .4; }
-.triage-empty p { font-size: 13px; }
+.triage-skeleton { position: relative; overflow: hidden; }
+.triage-skeleton div { height: 54px; border-radius: var(--r-md); background: var(--line-soft); margin-bottom: 8px; position: relative; overflow: hidden; }
+.triage-skeleton div::after {
+    content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--bg-raise2) 96%, transparent), transparent);
+    animation: skShimmer 1.4s infinite var(--ease);
+}
+.triage-empty {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; min-height: 132px;
+    text-align: center; padding: 36px 16px;
+    color: var(--ink-dim);
+    border: 1px dashed var(--line); border-radius: var(--r-md);
+    background: var(--bg-raise);
+}
+.triage-empty i {
+    width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center;
+    font-size: 18px; opacity: 1; color: var(--trace-ink);
+    background: var(--trace-bg); border: 1px solid var(--line);
+}
+.triage-empty p { font-size: 13px; max-width: 360px; line-height: 1.55; }
 
 /* ---------- Modal ---------- */
 .triage-modal {
