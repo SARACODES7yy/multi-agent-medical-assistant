@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MediAssist AI — Sign Up</title>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link rel="stylesheet" href="/static/css/style.css">
     <script>(function(){try{var s=localStorage.getItem('theme');var m=window.matchMedia('(prefers-color-scheme: light)').matches;var t=s||(m?'light':'dark');document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
@@ -18,7 +21,7 @@
                 <h1 class="auth-title">Join MediAssist</h1>
                 <p class="auth-subtitle">Create your account</p>
             </div>
-            <div id="signup-error" class="auth-error" style="display:none;" role="alert" aria-live="assertive"></div>
+            <div id="signup-error" class="auth-error" style="display:none;" role="alert" aria-live="assertive" tabindex="-1"></div>
             <form id="signup-form">
                 <div class="form-group">
                     <label for="su-email">Email</label>
@@ -121,8 +124,8 @@
                 });
                 const d = await r.json();
                 if (r.ok) window.location.href = '/home';
-                else { err.textContent = d.detail || 'Signup failed'; err.style.display = 'block'; }
-            } catch(ex) { err.textContent = 'Network error'; err.style.display = 'block'; }
+                else { err.textContent = d.detail || 'Signup failed'; err.style.display = 'block'; err.focus(); }
+            } catch(ex) { err.textContent = 'Network error'; err.style.display = 'block'; err.focus(); }
             btn.disabled = false; btn.innerHTML = 'Create Account';
         });
         toggleRole();

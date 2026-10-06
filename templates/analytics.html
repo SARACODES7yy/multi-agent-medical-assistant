@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MediAssist — Analytics Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com">
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link rel="stylesheet" href="/static/css/style.css">
@@ -42,7 +45,8 @@
         </div>
 
         <!-- KPIs -->
-        <section class="triage-kpi-grid dash-kpis" id="dash-kpis" aria-live="polite">
+        <span class="sr-only" id="dash-live" role="status" aria-atomic="true"></span>
+        <section class="triage-kpi-grid dash-kpis" id="dash-kpis">
             <div class="sk sk-block" aria-hidden="true"></div>
             <div class="sk sk-block" aria-hidden="true"></div>
             <div class="sk sk-block" aria-hidden="true"></div>

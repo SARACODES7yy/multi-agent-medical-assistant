@@ -33,11 +33,22 @@ function loadSummary(showStamp) {
       renderAll(j);
       if (showStamp !== false) stamp();
       if (typeof applyI18n === 'function') applyI18n();
+      announce(j);
       return j;
     })
     .catch(function(e) {
       var el = $('dash-stamp'); if (el) el.textContent = 'Failed to load: ' + e.message;
     });
+}
+
+function announce(d) {
+  var el = $('dash-live'); if (!el) return;
+  var k = d.kpis || {}, parts = [];
+  if (k.sessions) parts.push(k.sessions + ' sessions');
+  if (k.emergency) parts.push(k.emergency + ' emergency');
+  if (k.urgent) parts.push(k.urgent + ' urgent');
+  if (k.completed) parts.push(k.completed + ' completed');
+  el.textContent = parts.length ? 'Dashboard updated: ' + parts.join(', ') + '.' : 'Dashboard updated.';
 }
 
 function stamp() {
@@ -106,9 +117,11 @@ function renderRisk(risk) {
     return '<div class="dash-legend-row"><span class="dash-legend-dot" style="background:' + (RISK_COLORS[e.k] || '#60a5fa') + '"></span>' +
       '<span class="dash-legend-label">' + esc(e.k.charAt(0).toUpperCase() + e.k.slice(1)) + '</span><span class="dash-legend-val">' + e.v + ' · ' + pct + '%</span></div>';
   }).join('');
-  el.innerHTML = '<div class="triage-donut-wrap"><div class="triage-donut"><svg viewBox="0 0 140 140">' + segs +
+  var summary = entries.map(function(e) { return e.v + ' ' + e.k; }).join(', ');
+  el.innerHTML = '<div class="triage-donut-wrap"><div class="triage-donut"><svg viewBox="0 0 140 140" aria-hidden="true">' + segs +
     '</svg><div class="triage-donut-center"><b>' + total + '</b><span>sessions</span></div></div>' +
-    '<div class="dash-legend">' + legend + '</div></div>';
+    '<div class="dash-legend">' + legend + '</div></div>' +
+    '<p class="sr-only">Risk mix: ' + esc(summary) + '.</p>';
 }
 
 function renderBars(id, data, colorMap, label) {
@@ -117,13 +130,14 @@ function renderBars(id, data, colorMap, label) {
   if (!keys.length) { el.innerHTML = '<div class="triage-empty"><p>No data yet.</p></div>'; return; }
   keys.sort(function(a, b) { return data[b] - data[a]; });
   var max = data[keys[0]] || 1;
+  var summary = keys.map(function(k) { return k + ' ' + data[k]; }).join(', ');
   el.innerHTML = keys.map(function(k, i) {
     var color = (colorMap && colorMap[k]) || BAR_COLORS[i % BAR_COLORS.length];
     var pct = Math.max(2, Math.round((data[k] / max) * 100));
     return '<div class="triage-bar-row"><span class="triage-bar-label" title="' + esc(label || '') + ' ' + esc(k) + '">' + esc(k) +
       '</span><div class="triage-bar-track"><div class="triage-bar-fill" style="width:' + pct + '%;background:' + color + '"></div></div>' +
       '<span class="triage-bar-val">' + data[k] + '</span></div>';
-  }).join('');
+  }).join('') + '<p class="sr-only">' + esc(label || 'Chart') + ': ' + esc(summary) + '.</p>';
 }
 
 function renderTrend(t) {
@@ -146,23 +160,27 @@ function renderTrend(t) {
   var ticks = [0, Math.floor(labels.length / 2), labels.length - 1].map(function(i) {
     return '<span class="dash-trend-tick">' + esc((labels[i] || '').slice(5)) + '</span>';
   }).join('');
-  el.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' +
+  var sum = series.reduce(function(a, b) { return a + (+b || 0); }, 0);
+  el.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" aria-hidden="true">' +
     '<path d="' + area + '" fill="rgba(20,184,166,.14)"></path>' +
     '<path d="' + line + '" fill="none" stroke="#14b8a6" stroke-width="2"></path>' + dots + '</svg>' +
-    '<div class="dash-trend-axis">' + ticks + '</div>';
+    '<div class="dash-trend-axis">' + ticks + '</div>' +
+    '<p class="sr-only">Sessions over time: total ' + sum + ' across ' + labels.length + ' days.</p>';
 }
 
 function renderHours(hours) {
   var el = $('dash-hours'); if (!el) return;
   if (!hours.length) { el.innerHTML = '<div class="triage-empty"><p>No data.</p></div>'; return; }
   var max = Math.max.apply(null, hours.map(function(h) { return h.count; }).concat([1]));
+  var peak = hours.reduce(function(a, h) { return (h.count || 0) > (a.count || 0) ? h : a; }, { count: 0 });
   el.innerHTML = '<div class="dash-hours-grid">' + hours.map(function(h) {
     var frac = h.count / max;
     var alpha = h.count ? (0.25 + frac * 0.75).toFixed(2) : 0;
     var bg = h.count ? 'rgba(20,184,166,' + alpha + ')' : 'var(--bg-raise2)';
     return '<div class="dash-hour-cell" style="background:' + bg + '" title="' + String(h.hour).padStart(2, '0') + ':00 — ' + h.count + ' sessions">' +
       '<span class="dash-hour-n">' + (h.count || '') + '</span><span class="dash-hour-h">' + String(h.hour).padStart(2, '0') + '</span></div>';
-  }).join('') + '</div>';
+  }).join('') + '</div>' +
+    '<p class="sr-only">Intake by hour: peak at ' + String(peak.hour || '').padStart(2, '0') + ':00 with ' + (peak.count || 0) + ' sessions.</p>';
 }
 
 function renderActivity(items) {

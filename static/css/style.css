@@ -23,7 +23,7 @@
     --line-soft: rgba(210, 232, 226, .06);
     --ink:       #EAF0EE;
     --ink-dim:   #8CA39C;
-    --ink-faint: #5E7570;
+    --ink-faint: #748B83;
     --trace:     #2BC8A6;   /* signal teal — primary */
     --trace-ink: #6FE3C6;
     --trace-bg:  rgba(43, 200, 166, .10);
@@ -51,7 +51,7 @@ html[data-theme="light"] {
     --line-soft: rgba(38, 44, 41, .07);
     --ink:       #202B27;
     --ink-dim:   #5C6A65;
-    --ink-faint: #83928C;
+    --ink-faint: #64726B;
     --trace:     #0E7A68;
     --trace-ink: #0C5F52;
     --trace-bg:  rgba(14, 122, 104, .09);
@@ -70,6 +70,13 @@ html[data-theme="light"] {
 ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 99px; }
 
 :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 4px; }
+
+html { scroll-padding-top: 72px; }
+@media (min-width: 1024px) { html { font-size: 15px; } }
+.sr-only {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0;
+}
 
 body {
     background: var(--bg);
@@ -527,7 +534,7 @@ body {
     resize: vertical; margin-bottom: 4px;
 }
 .validation-comments::placeholder { color: var(--ink-faint); }
-.validation-comments:focus { outline: none; border-color: var(--amber); }
+.validation-comments:focus { outline: none; border-color: var(--amber); box-shadow: 0 0 0 3px var(--amber-bg); }
 
 /* ============================================================
    FORMS / AUTH
@@ -790,9 +797,14 @@ body {
     .chat-header { padding: 10px 14px; flex-wrap: wrap; }
     .chat-footer { padding: 10px 12px 8px; }
     .composer, .composer-preview { max-width: 100%; }
-    .composer-attach, .composer-send, .mic-btn { width: 40px; height: 40px; font-size: 14px; }
+    .composer-attach, .composer-send, .mic-btn { width: 44px; height: 44px; font-size: 14px; }
     .composer-input { min-height: 40px; }
     .welcome-panel h2 { font-size: 21px; }
+}
+
+@media (hover: none) and (pointer: coarse) {
+    .triage-tab, .tab, .btn-sm { min-height: 44px; }
+    .triage-select, .form-group select { min-height: 44px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

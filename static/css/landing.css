@@ -40,7 +40,7 @@ html { scroll-behavior: smooth; scroll-padding-top: 80px; }
     background: radial-gradient(circle, var(--trace-bg) 0%, transparent 65%); filter: blur(10px); animation: drift 14s ease-in-out infinite alternate; }
 @keyframes drift { to { transform: translate(-60px, 50px) scale(1.12); } }
 .hero .wrap { position: relative; display: grid; grid-template-columns: 1.05fr .95fr; gap: 56px; align-items: center; }
-.hero h1 { font-size: clamp(36px, 5.2vw, 60px); line-height: 1.06; margin: 20px 0 20px; color: var(--ink); }
+.hero h1 { font-size: clamp(36px, 5.2vw, 60px); line-height: 1.06; margin: 20px 0 20px; color: var(--ink); text-wrap: balance; }
 .hero h1 em { font-style: normal; color: var(--trace-ink); position: relative; white-space: nowrap; }
 .hero h1 em::after { content: ""; position: absolute; left: 0; right: 0; bottom: 2px; height: 3px; border-radius: 2px; background: var(--trace); transform: scaleX(0); transform-origin: left; animation: underline 1s var(--ease) 1.1s forwards; opacity: .55; }
 @keyframes underline { to { transform: scaleX(1); } }
@@ -78,7 +78,7 @@ html { scroll-behavior: smooth; scroll-padding-top: 80px; }
 /* sections */
 .section { padding: 110px 0 20px; }
 .section-head { max-width: 640px; margin-bottom: 44px; }
-.section-head h2 { font-size: clamp(27px, 3.4vw, 38px); line-height: 1.15; margin: 14px 0 12px; }
+.section-head h2 { font-size: clamp(27px, 3.4vw, 38px); line-height: 1.15; margin: 14px 0 12px; text-wrap: balance; }
 .section-head p { color: var(--ink-dim); font-size: 15.5px; line-height: 1.65; }
 
 /* agent cards with cursor spotlight */
@@ -153,4 +153,8 @@ html { scroll-behavior: smooth; scroll-padding-top: 80px; }
     html { scroll-behavior: auto; }
     .js .reveal, .hero .reveal-load, .note-row { opacity: 1 !important; transform: none !important; }
     .ecg path, .cta svg path, .hero h1 em::after { stroke-dashoffset: 0 !important; transform: none !important; opacity: 1 !important; }
+    .marquee-track, .hero-glow, .float-chip, .monitor-top .dots i { animation: none !important; }
+    .marquee-track { transform: none !important; }
+    .float-chip { transform: none !important; }
+    .js .reveal.in, .in .step-dot { transition: none !important; }
 }
