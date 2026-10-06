@@ -1836,14 +1836,14 @@ async def api_translate(request: Request, session_id: Optional[str] = Cookie(Non
     target_name = str(body.get("target_name") or "").strip()
     if not text:
         return {"status": "ok", "translated": ""}
-    allowed = {"en", "hi", "bn", "ta", "te", "mr", "gu"}
+    allowed = {"en", "hi", "bn", "ta", "te", "mr", "gu", "or"}
     if target not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported target language")
     if target == "en":
         return {"status": "ok", "translated": text}
     if not target_name:
         target_name = {"hi": "Hindi", "bn": "Bengali", "ta": "Tamil", "te": "Telugu",
-                       "mr": "Marathi", "gu": "Gujarati"}.get(target, target)
+                       "mr": "Marathi", "gu": "Gujarati", "or": "Odia"}.get(target, target)
     cache_key = "tr:" + target + ":" + hashlib.sha256(text[:4000].encode("utf-8", "ignore")).hexdigest()
     hit = _ai_cache_lookup(cache_key)
     if hit:
