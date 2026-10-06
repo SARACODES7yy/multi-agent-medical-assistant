@@ -805,6 +805,9 @@ body {
 @media (hover: none) and (pointer: coarse) {
     .triage-tab, .tab, .btn-sm { min-height: 44px; }
     .triage-select, .form-group select { min-height: 44px; }
+    .triage-queue-tools { flex-direction: row; padding: 8px; }
+    .triage-prio-btn, .triage-pin-btn { min-height: 44px; min-width: 44px; font-size: 13px; }
+    .triage-queue-cb { width: 20px; height: 20px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

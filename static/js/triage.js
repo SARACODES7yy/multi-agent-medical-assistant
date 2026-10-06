@@ -978,13 +978,15 @@ function renderQueue() {
     var missBadge = missN ? '<span class="triage-badge triage-badge-missing" title="Missing information"><i class="fas fa-circle-question me-1"></i>' + missN + ' missing</span>' : '';
     var fuBadge = fuN ? '<span class="triage-badge triage-badge-followup" title="Follow-up questions"><i class="fas fa-comments me-1"></i>' + fuN + ' follow-ups</span>' : '';
     var isPinned = pins.indexOf(item.code) >= 0;
-    var chips = missBadge + fuBadge + labBadge + fuHtml;
-    var metaBits = fmtDate(item.createdAt) + ' · ' + esc(item.package || item.scenario || item.facility || '—') + ' · ' + esc(item.narrative || '').slice(0, 60);
+    var chips = fuHtml + labBadge + missBadge + fuBadge;
+    var metaBits = fmtDate(item.createdAt) + ' · ' + esc(item.package || item.scenario || item.facility || '—');
+    var story = esc(item.narrative || item.summary || '').slice(0, 100);
     html += '<div class="triage-queue-row triage-queue-row-risk-' + item.risk + '" draggable="true" data-code="' + esc(item.code) + '" title="Drag to reprioritize">'
-      + '<div class="triage-queue-prio"><button class="triage-prio-btn" data-act="up" data-code="' + esc(item.code) + '" title="' + esc(t('queue.moveUp')) + '"><i class="fas fa-chevron-up"></i></button>'
-      + '<button class="triage-prio-btn" data-act="down" data-code="' + esc(item.code) + '" title="' + esc(t('queue.moveDown')) + '"><i class="fas fa-chevron-down"></i></button></div>'
+      + '<div class="triage-queue-tools">'
       + '<button class="triage-pin-btn' + (isPinned ? ' is-active' : '') + '" data-pin="' + esc(item.code) + '" title="' + (isPinned ? esc(t('queue.clearPin')) : esc(t('queue.moveTop'))) + '"><i class="fas fa-thumbtack"></i></button>'
-      + '<button class="triage-queue-row-head" data-code="' + esc(item.code) + '"><span class="triage-queue-dot" style="background:' + rm.color + '"></span><div class="triage-queue-main"><div class="triage-queue-title"><span class="triage-code">' + esc(item.code) + '</span> <span class="triage-badge triage-badge-risk-' + item.risk + '">' + esc(rm.label) + '</span> <span class="triage-badge triage-badge-status">' + esc(sm.label) + '</span></div><div class="triage-queue-meta">' + (chips ? '<span class="triage-queue-chips">' + chips + '</span>' : '') + metaBits + '</div></div><span class="triage-queue-score" style="color:' + rm.color + '">' + item.score + '</span></button>'
+      + '<div class="triage-queue-prio"><button class="triage-prio-btn" data-act="up" data-code="' + esc(item.code) + '" title="' + esc(t('queue.moveUp')) + '"><i class="fas fa-chevron-up"></i></button>'
+      + '<button class="triage-prio-btn" data-act="down" data-code="' + esc(item.code) + '" title="' + esc(t('queue.moveDown')) + '"><i class="fas fa-chevron-down"></i></button></div></div>'
+      + '<button class="triage-queue-row-head" data-code="' + esc(item.code) + '"><div class="triage-queue-main"><div class="triage-queue-title"><span class="triage-queue-story" title="' + story + '">' + story + '</span><span class="triage-code">' + esc(item.code) + '</span> <span class="triage-badge triage-badge-risk-' + item.risk + '">' + esc(rm.label) + '</span> <span class="triage-queue-status">' + esc(sm.label) + '</span></div><div class="triage-queue-meta">' + (chips ? '<span class="triage-queue-chips">' + chips + '</span>' : '') + metaBits + '</div></div><span class="triage-queue-score" style="color:' + rm.color + '">' + item.score + '</span></button>'
       + (state.isStaff && state.batchBar ? '<label class="triage-queue-cb-wrap" title="Select for batch validation"><input type="checkbox" class="triage-queue-cb" data-code="' + esc(item.code) + '"' + (state.batchSelected[item.code] ? ' checked' : '') + '></label>' : '') + '</div>';
   });
   list.innerHTML = html;
