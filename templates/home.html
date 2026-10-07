@@ -108,7 +108,7 @@
             <button class="triage-tab" data-tab="history" role="tab" aria-selected="false" aria-controls="tab-history"><i class="fas fa-history me-1"></i><span data-i18n="tab.historyPatient">My Follow-ups</span></button>
             <button class="triage-tab" data-tab="records" role="tab" aria-selected="false" aria-controls="tab-records"><i class="fas fa-folder-open me-1"></i><span data-i18n="tab.records">My Records</span><span class="triage-tab-count" id="records-badge" style="display:none;"></span></button>
             {% endif %}
-            <button class="triage-tab" data-tab="book-call" role="tab" aria-selected="false" aria-controls="tab-book-call"><i class="fas fa-phone me-1"></i><span data-i18n="tab.bookCall">Book Call</span></button>
+            <button class="triage-tab" data-tab="book-call" role="tab" aria-selected="false" aria-controls="tab-book-call"><i id="book-call-tab-icon" class="fas fa-phone me-1"></i><span id="book-call-tab-label" data-i18n="tab.bookCall">Book Call</span></button>
             <button class="triage-tab" data-tab="about" role="tab" aria-selected="false" aria-controls="tab-about"><i class="fas fa-circle-info me-1"></i><span data-i18n="tab.about">About &amp; Privacy</span></button>
         </div>
 
@@ -405,8 +405,8 @@
         <section class="triage-tabpanel" role="tabpanel" id="tab-book-call">
             <div class="triage-card">
                 <div class="triage-card-head">
-                    <h3><i class="fas fa-phone me-2 triage-teal"></i>Book a Call</h3>
-                    <span class="triage-card-sub">Patients: choose a doctor and an available slot. Doctors: set your availability and manage bookings.</span>
+                    <h3><i id="book-call-title-icon" class="fas fa-phone me-2 triage-teal"></i> <span id="book-call-title">Book a Call</span></h3>
+                    <span id="book-call-sub" class="triage-card-sub">Patients: choose a doctor and an available slot. Doctors: set your availability and manage bookings.</span>
                 </div>
                 <div id="book-call-content"></div>
             </div>
