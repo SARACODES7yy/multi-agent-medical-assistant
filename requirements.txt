@@ -30,6 +30,9 @@ langchain-groq>=0.3.0
 # Note: langchain-openai intentionally NOT included: it requires langchain-core>=1.x,
 # conflicting with the langchain 0.3.x ecosystem pinned in this project. OpenRouter
 # fallback stays off here; Groq is the primary provider.
+# Note: now adding langchain-openai for Cloudflare Workers AI (OpenAI-compatible)
+# pin to 0.3.x to remain compatible with langchain-core<1.0
+langchain-openai>=0.3.0,<0.4.0
 
 # --- Vector store (local Qdrant + hybrid search) ---
 qdrant-client>=1.13.5
