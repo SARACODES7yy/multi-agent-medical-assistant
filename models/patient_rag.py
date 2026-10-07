@@ -65,14 +65,21 @@ class PatientRAG:
         )
         logger.info(f"Deleted patient data for {patient_id} (source={source or 'all'})")
 
+    # Direct identifiers are deliberately NOT embedded into vector storage so a
+    # retrieval hit can never leak a name, birth date or ID number. Clinical
+    # content stays searchable; identity is only exposed via the patient_id
+    # metadata filter (which the server controls, never the embedding).
+    _PII_FIELDS = ("name", "qualification", "dob", "id_type", "id_number",
+                   "emergency_name", "emergency_phone")
+
     def add_profile_as_document(self, profile):
-        """Turn a patient profile into a RAG document and upsert."""
+        """Turn a patient profile into a RAG document and upsert (PII-minimised)."""
         user_id = profile["user_id"]
         fields = []
-        for key in ("name", "qualification", "dob", "medical_history", "allergies", "conditions", "treatments",
-                    "gender", "blood_group", "height", "weight", "blood_pressure", "medications", "family_history",
-                    "surgeries", "vaccination", "smoking", "alcohol", "exercise", "diet",
-                    "emergency_name", "emergency_phone"):
+        for key in ("medical_history", "allergies", "conditions", "treatments",
+                    "gender", "blood_group", "height", "weight", "blood_pressure",
+                    "medications", "family_history", "surgeries", "vaccination",
+                    "smoking", "alcohol", "exercise", "diet"):
             val = profile.get(key)
             if val:
                 fields.append(f"{key}: {val}")

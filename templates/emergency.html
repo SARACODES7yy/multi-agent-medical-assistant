@@ -74,7 +74,7 @@
         <div class="top">
             <div class="siren"><i class="fas fa-truck-medical"></i></div>
             <h1>Ambulance Request</h1>
-            <p>Share your live location and request an ambulance. No login needed.</p>
+            <p>Sign in required — trial service only. Location is stored rounded to ~1 km precision.</p>
             <p>
                 <a href="/home" class="em-back"><i class="fas fa-arrow-left"></i> Back to MediAssist</a>
                 <button type="button" class="em-back" onclick="toggleTheme()" title="Toggle theme" aria-label="Toggle theme"><i class="fas fa-moon"></i></button>
@@ -130,7 +130,7 @@
             <div class="ok-box">
                 <div class="big"><i class="fas fa-circle-check"></i></div>
                 <h2>Request Received</h2>
-                <p style="color:var(--muted);">A mock response has been logged with your live location.</p>
+                <p style="color:var(--muted);">A simulated response was logged with your approximate location (~1 km precision).</p>
                 <span class="reqid" id="reqid"></span>
                 <p class="note"><i class="fas fa-flask" style="margin-right:6px;"></i>Trial only — this was recorded for the demo,<br>nothing was actually dispatched.</p>
             </div>
@@ -230,6 +230,16 @@
             });
 
             startTracking();
+
+            // Trial service requires a signed-in demo account.
+            fetch('/me', { credentials: 'same-origin' })
+                .then(function (r) {
+                    if (r.status === 401) {
+                        $('sendbtn').disabled = true;
+                        showErr('Sign in required. This trial page only records simulated requests — log in as the demo doctor/patient from home first.');
+                    }
+                })
+                .catch(function () {});
         })();
     </script>
 </body>

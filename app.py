@@ -37,7 +37,7 @@ def _ai_cache_store(key, data):
                 del _AI_CACHE[_k]
 from io import BytesIO
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Request, Response, Cookie
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Request, Response, Cookie, Query
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from starlette.concurrency import run_in_threadpool
 from contextlib import asynccontextmanager
@@ -957,6 +957,83 @@ def me(session_id: Optional[str] = Cookie(None)):
     profile = db.get_profile(user["id"]) or {}
     return {"status": "ok", "user": {"id": user["id"], "email": user["email"], "role": user["role"], "name": profile.get("name",""), "qualification": profile.get("qualification"), **{k: profile.get(k) for k in ("dob","id_type","id_number","medical_history","allergies","conditions","treatments","gender","blood_group","height","weight","blood_pressure","medications","family_history","surgeries","vaccination","smoking","alcohol","exercise","diet","emergency_name","emergency_phone")}}}
 
+@app.get("/api/staff/audit")
+def staff_audit(limit: int = Query(200, ge=1, le=2000), session_id: Optional[str] = Cookie(None)):
+    """Append-only server audit trail for staff (safety + accountability)."""
+    payload = verify_session_cookie(session_id)
+    if not payload or payload["role"] not in ("doctor", "nurse"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        entries = db.get_audit_log(limit=limit)
+    except Exception as e:
+        logger.warning(f"staff_audit read failed: {e}")
+        entries = []
+    return {"status": "ok", "audit": entries}
+
+@app.get("/api/profile/export")
+def export_my_data(session_id: Optional[str] = Cookie(None)):
+    """Download everything the platform holds about the caller (portability + transparency)."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    uid = payload["user_id"]
+    user = db.get_user(uid)
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    role = user["role"]
+    profile = db.get_profile(uid) or {}
+    sessions = [s for s in db.get_triage_sessions(limit=1000) if s.get("user_id") == uid]
+    labs = db.get_recent_lab_results(user_id=uid, limit=1000)
+    instructions = db.get_patient_instructions(uid) if role == "patient" else []
+    checkups = db.get_checkups(patient_id=uid) if role == "patient" else []
+    bookings = db.get_bookings(uid, role)
+    prescriptions = db.list_prescriptions(patient_id=uid) if role == "patient" else []
+    invoices = db.list_invoices(patient_id=uid) if role == "patient" else []
+    soap = []
+    for s in sessions:
+        n = db.get_soap_note_by_session(s["id"])
+        if n:
+            soap.append(n)
+    return {
+        "status": "ok",
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "account": {"id": uid, "email": user["email"], "role": role},
+        "profile": profile,
+        "triage_sessions": sessions,
+        "lab_results": labs,
+        "instructions": instructions,
+        "checkups": checkups,
+        "bookings": bookings,
+        "prescriptions": prescriptions,
+        "invoices": invoices,
+        "soap_notes": soap,
+    }
+
+@app.post("/api/profile/delete")
+def delete_my_data(response: Response, session_id: Optional[str] = Cookie(None)):
+    """Right-to-erasure: remove the caller's profile, records, and RAG vectors."""
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    uid = payload["user_id"]
+    role = payload["role"]
+    try:
+        if role == "patient":
+            try:
+                patient_rag.delete_patient_data(uid)
+            except Exception as e:
+                logger.warning(f"delete_my_data: RAG cleanup failed: {e}")
+        removed = db.delete_user_data(uid)
+    except Exception as e:
+        logger.error(f"delete_my_data failed for {uid}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete account data")
+    db.add_audit(uid, role, "account_deleted",
+                 f"User account and all associated records deleted (rows={removed}).")
+    # clear the browser session regardless of auth backend used
+    auth_manager.logout(session_id)
+    response.delete_cookie(key="session_id")
+    return {"status": "success", "removed": removed}
+
 @app.get("/api/doctor/patients")
 def doctor_patients(session_id: Optional[str] = Cookie(None)):
     payload = verify_session_cookie(session_id)
@@ -1077,25 +1154,66 @@ class TriageSessionUpsert(BaseModel):
 
 @app.post("/api/triage/sessions")
 async def upsert_triage_session(req: TriageSessionUpsert, session_id: Optional[str] = Cookie(None)):
-    """Create or update a triage session (persisted from the intake flow)."""
+    """Create or update a triage session (persisted from the intake flow).
+
+    Safety/privacy controls enforced server-side:
+    - informed consent must be True before any note is persisted/shared;
+    - emergency sessions cannot be silently downgraded to a lower severity;
+    - every save is written to the append-only server audit log;
+    - new emergency sessions page the entire care team.
+    """
     payload = verify_session_cookie(session_id)
     if not payload:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    if not req.consent:
+        db.add_audit(payload["user_id"], payload["role"], "consent_required",
+                     f"Rejected triage save; informed consent missing (risk={req.risk}).")
+        raise HTTPException(status_code=400, detail="Informed consent is required before a triage note can be saved or shared with the care team.")
     if req.risk not in ("emergency", "urgent", "standard", "routine"):
         req.risk = "standard"
     if req.status not in ("requested", "scheduled", "completed"):
         req.status = "requested"
+    existing = None
+    if req.id:
+        try:
+            existing = db.get_triage_session(req.id)
+        except Exception:
+            existing = None
+        if existing and existing.get("risk") == "emergency" and req.risk != "emergency":
+            db.add_audit(payload["user_id"], payload["role"], "blocked_downgrade",
+                         f"Blocked downgrade of emergency session {str(req.id)[:8]} to risk={req.risk}.", req.id)
+            raise HTTPException(status_code=409, detail="Emergency triage sessions cannot be downgraded to a lower severity.")
     session = req.model_dump()
     session["id"] = session.get("id") or str(uuid.uuid4())
     session["user_id"] = payload["user_id"]
     saved = db.upsert_triage_session(session)
     if not saved:
         raise HTTPException(status_code=500, detail="Failed to save triage session")
+    db.add_audit(payload["user_id"], payload["role"], "session_saved",
+                 f"Triage session {str(saved.get('id'))[:8]} saved (risk={saved.get('risk')}, severity={saved.get('score')}).",
+                 saved.get("id"))
+    if saved.get("risk") == "emergency" and not (existing and existing.get("risk") == "emergency"):
+        # New emergency triage -> page all care-team members.
+        try:
+            for doc in db.get_doctors() or []:
+                create_notification(
+                    db, doc.get("id"), "emergency", "Emergency triage to review",
+                    f"Patient {saved.get('anonym_code') or str(saved.get('id'))[:8]} flagged category {saved.get('risk','emergency').upper()}. Immediate review required.",
+                    link="/")
+        except Exception as e:
+            logger.warning(f"Failed to page care team for emergency session: {e}")
+        db.add_audit(payload["user_id"], payload["role"], "emergency_created",
+                     f"Emergency triage session {str(saved.get('id'))[:8]} created; care team paged.", saved.get("id"))
     return {"status": "ok", "session": saved}
 
 @app.patch("/api/triage/session/{ts_id}")
 async def update_triage_session(ts_id: str, request: Request, session_id: Optional[str] = Cookie(None)):
-    """Doctor/nurse advances a triage session's queue status."""
+    """Doctor/nurse advances a triage session's queue status.
+
+    Emergency sessions cannot be marked completed without an explicit
+    `confirm_emergency=true` acknowledgement; every transition is audited
+    with the acting staff member's identity.
+    """
     payload = verify_session_cookie(session_id)
     if not payload:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -1105,9 +1223,18 @@ async def update_triage_session(ts_id: str, request: Request, session_id: Option
     status = body.get("status")
     if status not in ("requested", "scheduled", "completed"):
         raise HTTPException(status_code=400, detail="Invalid status")
+    existing = db.get_triage_session(ts_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Triage session not found")
+    if status == "completed" and existing.get("risk") == "emergency" and not body.get("confirm_emergency"):
+        db.add_audit(payload["user_id"], payload["role"], "blocked_completion",
+                     f"Completion of emergency session {ts_id[:8]} requires confirm_emergency=true.", ts_id)
+        raise HTTPException(status_code=400, detail="Confirm emergency resolution by sending confirm_emergency=true.")
     ok = db.update_triage_session_status(ts_id, status, body.get("follow_up_date"))
     if not ok:
         raise HTTPException(status_code=404, detail="Triage session not found")
+    db.add_audit(payload["user_id"], payload["role"], "status_change",
+                 f"Triage session {ts_id[:8]} moved to status={status}.", ts_id)
     return {"status": "success"}
 
 @app.patch("/api/checkup/{checkup_id}")
@@ -1123,6 +1250,8 @@ async def update_checkup(checkup_id: str, request: Request, session_id: Optional
     ok = db.update_checkup_status(checkup_id, status)
     if not ok:
         raise HTTPException(status_code=404, detail="Checkup not found")
+    db.add_audit(payload["user_id"], payload["role"], "checkup_status_change",
+                 f"Checkup {checkup_id[:8]} moved to status={status}.", checkup_id)
     return {"status": "success"}
 
 
@@ -1989,7 +2118,17 @@ def emergency_page(request: Request):
 
 @app.post("/api/ambulance/request")
 async def create_ambulance_request(request: Request, session_id: Optional[str] = Cookie(None)):
-    """Public (no-auth) ambulance request with live location. Trial only."""
+    """Authenticated ambulance request — TRIAL/SIMULATED only, no live dispatch.
+
+    Privacy-by-minimization for the showcase:
+    - requires a signed-in account (no anonymous PII collection);
+    - location is stored quantized to a ~1 km grid (2 decimal places), not raw GPS;
+    - phone is stored partially masked;
+    - every request is flagged simulated=True and written to the audit log.
+    """
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Sign in required. This is a trial service and does not dispatch real ambulances.")
     ip = request.client.host if request.client else "unknown"
     now = time.time()
     with _AMBULANCE_RATE_LOCK:
@@ -1998,8 +2137,14 @@ async def create_ambulance_request(request: Request, session_id: Optional[str] =
             raise HTTPException(status_code=429, detail="Too many requests. Wait a minute and try again.")
         _AMBULANCE_HITS[ip].append(now)
     body = await request.json()
-    name = str(body.get("name", "")).strip()[:80]
-    phone = str(body.get("phone", "")).strip()[:20]
+    profile = db.get_profile(payload["user_id"]) or {}
+    name = str(body.get("name", "") or profile.get("name", "")).strip()[:80]
+    phone_in = str(body.get("phone", "")).strip()[:20]
+    # mask phone so the stored record keeps only a partial value
+    if len(phone_in) > 4:
+        phone = phone_in[:3] + "•" * (len(phone_in) - 5) + phone_in[-2:]
+    else:
+        phone = phone_in
     emergency_type = str(body.get("emergency_type", "")).strip()[:60] or "Emergency"
     notes = str(body.get("notes", "")).strip()[:200]
     latitude = body.get("latitude")
@@ -2013,16 +2158,23 @@ async def create_ambulance_request(request: Request, session_id: Optional[str] =
         raise HTTPException(status_code=400, detail="Invalid location coordinates")
     if latitude is None or longitude is None:
         raise HTTPException(status_code=400, detail="Live location is required. Please allow location access.")
+    # quantization: ~1.1 km at the equator — real GPS is never persisted
+    latitude = round(latitude, 2)
+    longitude = round(longitude, 2)
     record = db.create_ambulance_request({
         "name": name, "phone": phone, "emergency_type": emergency_type, "notes": notes,
         "latitude": latitude, "longitude": longitude, "accuracy": accuracy,
-        "status": "requested",
+        "simulated": True, "status": "requested",
     })
     if not record:
         raise HTTPException(status_code=500, detail="Failed to create ambulance request")
-    logger.info("Ambulance request created: id=%s type=%s lat=%.5f lng=%.5f",
+    db.add_audit(payload["user_id"], payload["role"], "ambulance_request",
+                 f"Simulated ambulance request id={record.get('id')[:8]} type={emergency_type} "
+                 f"at approx ({latitude},{longitude}). Trial only — nothing dispatched.",
+                 record.get("id"))
+    logger.info("Simulated ambulance request: id=%s type=%s approx lat=%.2f lng=%.2f",
                 record.get("id"), emergency_type, latitude, longitude)
-    return {"status": "ok", "request": {
+    return {"status": "ok", "simulated": True, "request": {
         "id": record.get("id"),
         "emergency_type": record.get("emergency_type"),
         "latitude": record.get("latitude"),

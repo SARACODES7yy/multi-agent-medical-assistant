@@ -218,6 +218,15 @@ class Database:
     def get_ambulance_requests(self, limit=50):
         raise NotImplementedError
 
+    def add_audit(self, user_id, role, action, detail="", session_id=""):
+        raise NotImplementedError
+
+    def get_audit_log(self, limit=500):
+        raise NotImplementedError
+
+    def delete_user_data(self, user_id):
+        raise NotImplementedError
+
 
 class SQLiteDB(Database):
     """SQLite backend (default, zero external dependencies)."""
@@ -432,12 +441,20 @@ class SQLiteDB(Database):
             latitude REAL,
             longitude REAL,
             accuracy REAL,
+            simulated INTEGER DEFAULT 0,
             status TEXT NOT NULL DEFAULT 'requested' CHECK(status IN ('requested','dispatched','cancelled')),
             created_at TEXT NOT NULL
         );
         """)
         conn.commit()
         self._migrate_columns(conn)
+        try:
+            existing_amb = {r[1] for r in conn.execute("PRAGMA table_info(ambulance_requests)").fetchall()}
+            if "simulated" not in existing_amb:
+                conn.execute("ALTER TABLE ambulance_requests ADD COLUMN simulated INTEGER DEFAULT 0")
+        except Exception as e:
+            logger.warning(f"ambulance_requests migration skipped: {e}")
+        conn.commit()
         conn.close()
         logger.info("SQLite schema initialized")
 
@@ -940,23 +957,102 @@ class SQLiteDB(Database):
         now = self._now()
         conn = self._connect()
         conn.execute(
-            "INSERT INTO ambulance_requests (id,name,phone,emergency_type,notes,latitude,longitude,accuracy,status,created_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO ambulance_requests (id,name,phone,emergency_type,notes,latitude,longitude,accuracy,simulated,status,created_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (rid, request_data.get("name", ""), request_data.get("phone", ""),
              request_data.get("emergency_type", ""), request_data.get("notes", ""),
              request_data.get("latitude"), request_data.get("longitude"),
-             request_data.get("accuracy"), request_data.get("status", "requested"), now))
+             request_data.get("accuracy"), 1 if request_data.get("simulated") else 0,
+             request_data.get("status", "requested"), now))
         conn.commit()
         row = conn.execute("SELECT * FROM ambulance_requests WHERE id=?", (rid,)).fetchone()
         conn.close()
-        return dict(row) if row else None
+        out = dict(row) if row else None
+        if out:
+            out["simulated"] = bool(out.get("simulated"))
+        return out
 
     def get_ambulance_requests(self, limit=50):
         conn = self._connect()
         rows = conn.execute(
             "SELECT * FROM ambulance_requests ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         conn.close()
+        out = [dict(r) for r in rows]
+        for r in out:
+            r["simulated"] = bool(r.get("simulated"))
+        return out
+
+    def add_audit(self, user_id, role, action, detail="", session_id=""):
+        """Append-only server-side audit entry. Idempotent-inserted, never updated."""
+        aid = str(uuid.uuid4())
+        now = self._now()
+        conn = self._connect()
+        try:
+            conn.execute(
+                "INSERT INTO audit_log (id,user_id,role,action,detail,session_id,created_at)"
+                " VALUES (?,?,?,?,?,?,?)",
+                (aid, user_id or "", role or "", action, detail or "", session_id or "", now))
+        except Exception:
+            try:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS audit_log ("
+                    " id TEXT PRIMARY KEY, user_id TEXT, role TEXT, action TEXT,"
+                    " detail TEXT DEFAULT '', session_id TEXT DEFAULT '', created_at TEXT NOT NULL)")
+                conn.execute(
+                    "INSERT INTO audit_log (id,user_id,role,action,detail,session_id,created_at)"
+                    " VALUES (?,?,?,?,?,?,?)",
+                    (aid, user_id or "", role or "", action, detail or "", session_id or "", now))
+            except Exception as e:
+                logger.warning(f"add_audit failed: {e}")
+                conn.close()
+                return None
+        conn.commit(); conn.close()
+        return {"id": aid, "user_id": user_id or "", "role": role or "", "action": action,
+                "detail": detail or "", "session_id": session_id or "", "created_at": now}
+
+    def get_audit_log(self, limit=500):
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        except Exception as e:
+            logger.warning(f"get_audit_log failed: {e}")
+            conn.close()
+            return []
+        conn.close()
         return [dict(r) for r in rows]
+
+    def delete_user_data(self, user_id):
+        """Delete every record owned by a user (right-to-erasure). Returns rows removed."""
+        conn = self._connect()
+        removed = 0
+        tables = [
+            ("notifications", "user_id"),
+            ("lab_results", "user_id"),
+            ("triage_sessions", "user_id"),
+            ("soap_notes", "patient_id"),
+            ("prescriptions", "patient_id"),
+            ("invoices", "patient_id"),
+            ("doctor_instructions", "patient_id"),
+            ("health_checkups", "patient_id"),
+            ("doctor_availability", "doctor_id"),
+            ("profiles", "user_id"),
+        ]
+        for table, col in tables:
+            try:
+                cur = conn.execute(f"DELETE FROM {table} WHERE {col}=?", (user_id,))
+                removed += cur.rowcount
+            except Exception as e:
+                logger.warning(f"delete_user_data {table} skipped: {e}")
+        try:
+            cur = conn.execute("DELETE FROM call_bookings WHERE patient_id=? OR doctor_id=?", (user_id, user_id))
+            removed += cur.rowcount
+        except Exception as e:
+            logger.warning(f"delete_user_data call_bookings skipped: {e}")
+        cur = conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+        removed += cur.rowcount
+        conn.commit(); conn.close()
+        return removed
 
 
 class SupabaseDB(Database):
@@ -1595,9 +1691,12 @@ class SupabaseDB(Database):
             row = dict(request_data)
             row["id"] = str(row.get("id") or uuid.uuid4())
             row["status"] = row.get("status", "requested")
+            row["simulated"] = 1 if row.get("simulated") else 0
             row["created_at"] = row.get("created_at") or self._now()
             r = self.client.table("ambulance_requests").insert(row).execute()
-            return r.data[0] if r and r.data and len(r.data) > 0 else row
+            out = r.data[0] if r and r.data and len(r.data) > 0 else row
+            out["simulated"] = bool(out.get("simulated"))
+            return out
         except Exception as e:
             logger.error(f"Supabase create_ambulance_request failed: {e}")
             return None
@@ -1606,10 +1705,64 @@ class SupabaseDB(Database):
         try:
             r = self.client.table("ambulance_requests").select("*") \
                 .order("created_at", desc=True).limit(limit).execute()
-            return r.data if r and r.data else []
+            out = r.data if r and r.data else []
+            for d in out:
+                d["simulated"] = bool(d.get("simulated"))
+            return out
         except Exception as e:
             logger.error(f"Supabase get_ambulance_requests failed: {e}")
             return []
+
+    def add_audit(self, user_id, role, action, detail="", session_id=""):
+        """Append-only server-side audit entry. Best-effort on remote backends."""
+        try:
+            row = {
+                "id": str(uuid.uuid4()), "user_id": user_id or "", "role": role or "",
+                "action": action or "", "detail": detail or "", "session_id": session_id or "",
+                "created_at": self._now(),
+            }
+            r = self.client.table("audit_log").insert(row).execute()
+            return r.data[0] if r and r.data else row
+        except Exception as e:
+            logger.warning(f"Supabase add_audit failed (remote table may need privileges): {e}")
+            return None
+
+    def get_audit_log(self, limit=500):
+        try:
+            r = self.client.table("audit_log").select("*") \
+                .order("created_at", desc=True).limit(limit).execute()
+            return r.data if r and r.data else []
+        except Exception as e:
+            logger.warning(f"Supabase get_audit_log failed: {e}")
+            return []
+
+    def delete_user_data(self, user_id):
+        """Best-effort right-to-erasure across remote tables."""
+        removed = 0
+        tables = [
+            ("notifications", "user_id"), ("lab_results", "user_id"),
+            ("triage_sessions", "user_id"), ("soap_notes", "patient_id"),
+            ("prescriptions", "patient_id"), ("invoices", "patient_id"),
+            ("doctor_instructions", "patient_id"), ("health_checkups", "patient_id"),
+            ("doctor_availability", "doctor_id"), ("profiles", "user_id"),
+        ]
+        for table, col in tables:
+            try:
+                r = self.client.table(table).delete().eq(col, user_id).execute()
+                removed += len(r.data or [])
+            except Exception as e:
+                logger.warning(f"Supabase delete_user_data {table} skipped: {e}")
+        try:
+            r = self.client.table("call_bookings").delete().or_(f"patient_id.eq.{user_id},doctor_id.eq.{user_id}").execute()
+            removed += len(r.data or [])
+        except Exception as e:
+            logger.warning(f"Supabase delete_user_data call_bookings skipped: {e}")
+        try:
+            r = self.client.table("users").delete().eq("id", user_id).execute()
+            removed += len(r.data or [])
+        except Exception as e:
+            logger.warning(f"Supabase delete_user_data users failed: {e}")
+        return removed
 
 
 def get_db() -> Database:
