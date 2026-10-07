@@ -1,4 +1,4 @@
-/* MediAssist — i18n UI translation layer.
+/* SWASTHYA PRATHAM — i18n UI translation layer.
    Languages: English, Hindi + 6 regional (Bengali, Tamil, Telugu, Marathi, Gujarati, Odia).
    Usage: <span data-i18n="key"></span> for text, <x data-i18n-html="key"></x> for html,
           t('key') for dynamic strings, applyI18n() after building DOM,
@@ -201,7 +201,7 @@ I18N_DICT.en = {
   'about.scenarios': 'India-wide Scenarios Covered',
 
   'footer.disclaimer': '<strong>Disclaimer:</strong> This is an <strong>educational prototype</strong> for triage-support only. It does <strong>not</strong> diagnose, prescribe, or replace a qualified medical professional. All outputs are advisory and reviewer-facing. Uses <strong>synthetic / sample data only</strong>. Final clinical decisions must always be made by a qualified reviewer.',
-  'footer.brand': 'MediAssist — Triage · Multimodal Healthcare Triage Assistant · Built for India-wide public health settings',
+  'footer.brand': 'SWASTHYA PRATHAM — Triage · Multimodal Healthcare Triage Assistant · Built for India-wide public health settings',
   'footer.trust': 'Consent-gated · Anonymized · Audit-logged · Non-diagnostic',
 
   'chat.translate': 'Translate',
@@ -375,7 +375,7 @@ I18N_DICT.hi = {
   'about.privacy': 'गोपनीयता और जिम्मेदार AI नियंत्रण',
   'about.scenarios': 'भारत भर के परिदृश्य',
   'footer.disclaimer': '<strong>अस्वीकरण:</strong> यह केवल ट्राइएज-सहायता के लिए एक <strong>शैक्षिक प्रोटोटाइप</strong> है। यह <strong>निदान, नुस्खा या योग्य चिकित्सक का स्थान नहीं लेता</strong>। सभी आउटपुट सलाह-हैं। केवल <strong>सिंथेटिक/नमूना डेटा</strong>। अंतिम नैदानिक निर्णय हमेशा योग्य समीक्षक द्वारा लिए जाने चाहिए।',
-  'footer.brand': 'MediAssist — Triage · मल्टीमॉडल हेल्थकेयर ट्राइएज सहायक · भारत भर के सार्वजनिक स्वास्थ्य के लिए',
+  'footer.brand': 'SWASTHYA PRATHAM — Triage · मल्टीमॉडल हेल्थकेयर ट्राइएज सहायक · भारत भर के सार्वजनिक स्वास्थ्य के लिए',
   'footer.trust': 'सहमति-आधारित · गुमनाम · ऑडिट-लॉग · गैर-निदान',
   'chat.translate': 'अनुवाद',
   'chat.translatedTo': 'अनुवादित'
@@ -548,7 +548,7 @@ I18N_DICT.bn = {
   'about.privacy': 'গোপনীয়তা ও দায়িত্বশীল AI নিয়ন্ত্রণ',
   'about.scenarios': 'ভারতব্যাপী পরিস্থিতি',
   'footer.disclaimer': '<strong>দাবিত্যাগ:</strong> এটি কেবল ট্রাইয়েজ-সমর্থনের জন্য একটি <strong>শিক্ষামূলক প্রোটোটাইপ</strong>। এটি <strong>রোগনির্ণয়, প্রেসক্রিপশন বা যোগ্য চিকিৎসকের বিকল্প নয়</strong>। সমস্ত ফলাফল পরামর্শমূলক। কেবল <strong>সিন্থেটিক/নমুনা ডেটা</strong>। চূড়ান্ত ক্লিনিক্যাল সিদ্ধান্ত সর্বদা যোগ্য পর্যালোচক নেবেন।',
-  'footer.brand': 'MediAssist — Triage · মাল্টিমোডাল স্বাস্থ্যসেবা ট্রাইয়েজ সহকারী · ভারতব্যাপী পাবলিক হেলথের জন্য',
+  'footer.brand': 'SWASTHYA PRATHAM — Triage · মাল্টিমোডাল স্বাস্থ্যসেবা ট্রাইয়েজ সহকারী · ভারতব্যাপী পাবলিক হেলথের জন্য',
   'footer.trust': 'সম্মতিভিত্তিক · বেনামী · অডিট-লগ · গৈর-রোগনির্ণয়',
   'chat.translate': 'অনুবাদ',
   'chat.translatedTo': 'অনুবাদিত'
@@ -721,7 +721,7 @@ I18N_DICT.ta = {
   'about.privacy': 'தனியுரிமை & பொறுப்பான AI கட்டுப்பாடுகள்',
   'about.scenarios': 'இந்தியா முழுவதும் உள்ள காட்சிகள்',
   'footer.disclaimer': '<strong>பொறுப்புத் துறப்பு:</strong> இது ட்ரையேஜ்-ஆதரவுக்கான <strong>கல்வி மாதிரி</strong> மட்டுமே. இது <strong>நோயறிதல், மருந்து அல்லது தகுதியாளர் மருத்துவருக்கு மாற்றாக</strong> செயல்படாது. அனைத்து வெளியீடுகளும் ஆலோசனை. <strong>செயற்கை/மாதிரி தரவு மட்டுமே</strong>. இறுதி மருத்துவ முடிவுகள் எப்போதும் தகுதியாளர் மதிப்பாளரால் எடுக்கப்பட வேண்டும்.',
-  'footer.brand': 'MediAssist — Triage · பல்முறை நுழைவு சுகாதார ட்ரையேஜ் உதவியாளர் · இந்தியா முழுவதும் உள்ள பொதுச் சுகாதாரத்திற்காக',
+  'footer.brand': 'SWASTHYA PRATHAM — Triage · பல்முறை நுழைவு சுகாதார ட்ரையேஜ் உதவியாளர் · இந்தியா முழுவதும் உள்ள பொதுச் சுகாதாரத்திற்காக',
   'footer.trust': 'சம்மத-அடிப்படை · அநாமதேய · தணிக்கை-பதிவு · நோயறிதல் அல்லாதது',
   'chat.translate': 'மொழிபெயர்',
   'chat.translatedTo': 'மொழிபெயர்க்கப்பட்டது'
@@ -894,7 +894,7 @@ I18N_DICT.te = {
   'about.privacy': 'గోప్యత & బాధ్యతాయుత AI నియంత్రణలు',
   'about.scenarios': 'భారతదేశవ్యాప్త సందర్భాలు',
   'footer.disclaimer': '<strong>నిరాకరణ:</strong> ఇది ట్రైయేజ్-మద్దతు కోసం <strong>విద్యా ప్రోటోటైప్</strong> మాత్రమే. ఇది <strong>రోగనిర్ధారణ, మందులు లేదా అర్హులైన వైద్యుని స్థానం</strong> తీసుకోదు. అన్ని ఫలితాలు సలహా. <strong>సింథెటిక్/నమూనా డేటా మాత్రమే</strong>. తుది వైద్య నిర్ణయాలు ఎప్పుడూ అర్హులైన సమీక్షకుడు తీసుకోవాలి.',
-  'footer.brand': 'MediAssist — Triage · బహుముఖ ఆరోగ్య ట్రైయేజ్ సహాయకుడు · భారతదేశవ్యాప్త పబ్లిక్ హెల్త్ కోసం',
+  'footer.brand': 'SWASTHYA PRATHAM — Triage · బహుముఖ ఆరోగ్య ట్రైయేజ్ సహాయకుడు · భారతదేశవ్యాప్త పబ్లిక్ హెల్త్ కోసం',
   'footer.trust': 'సమ్మతి-ఆధారిత · అనామక · ఆడిట్-లాగ్ · రోగనిర్ధారణ-రహితం',
   'chat.translate': 'అనువదించు',
   'chat.translatedTo': 'అనువదించబడింది'
@@ -1082,7 +1082,7 @@ I18N_DICT.or = {
   'about.scenarios': 'ଭାରତବ୍ୟାପୀ ଅନ୍ତର୍ଭୁକ୍ତ ପରିଦୃଶ୍ୟ',
 
   'footer.disclaimer': '<strong>ଅସ୍ୱୀକରଣ:</strong> ଏହା କେବଳ ଟ୍ରାଇଏଜ୍-ସମର୍ଥନ ପାଇଁ ଏକ <strong>ଶିକ୍ଷାମୂଳକ ପ୍ରୋଟୋଟାଇପ୍</strong>। ଏହା <strong>ରୋଗ ନିର୍ଣ୍ଣୟ କରେ ନାହିଁ</strong>, ଔଷଧ ବିଧାନ କରେ ନାହିଁ, କିମ୍ବା ଜଣେ ଯୋଗ୍ୟ ଚିକିତ୍ସକଙ୍କ ସ୍ଥାନ ନିଏ ନାହିଁ। ସମସ୍ତ ଫଳାଫଳ ପରାମର୍ଶଦାୟକ ଓ ସମୀକ୍ଷକ-ମୁଖୀ। <strong>କେବଳ ସିନ୍ଥେଟିକ୍ / ନମୁନା ତଥ୍ୟ</strong> ବ୍ୟବହାର ହୁଏ। ଅନ୍ତିମ କ୍ଲିନିକାଲ୍ ନିଷ୍ପତ୍ତି ସର୍ବଦା ଜଣେ ଯୋଗ୍ୟ ସମୀକ୍ଷକଙ୍କ ଦ୍ୱାରା ନିଆଯିବା ଉଚିତ୍।',
-  'footer.brand': 'MediAssist — Triage · ବହୁମୁଖୀ ସ୍ୱାସ୍ଥ୍ୟ ଟ୍ରାଇଏଜ୍ ସହାୟକ · ଭାରତବ୍ୟାପୀ ସାର୍ବଜନୀନ ସ୍ୱାସ୍ଥ୍ୟ ପାଇଁ',
+  'footer.brand': 'SWASTHYA PRATHAM — Triage · ବହୁମୁଖୀ ସ୍ୱାସ୍ଥ୍ୟ ଟ୍ରାଇଏଜ୍ ସହାୟକ · ଭାରତବ୍ୟାପୀ ସାର୍ବଜନୀନ ସ୍ୱାସ୍ଥ୍ୟ ପାଇଁ',
   'footer.trust': 'ସମ୍ମତି-ନିୟନ୍ତ୍ରିତ · ଅଜ୍ଞାତୀକୃତ · ଅଡିଟ୍-ଲଗ୍ · ଅଣ-ରୋଗ ନିର୍ଣ୍ଣୟକାରୀ',
 
   'chat.translate': 'ଅନୁବାଦ କର',

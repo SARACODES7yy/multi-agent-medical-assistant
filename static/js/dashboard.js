@@ -1,4 +1,4 @@
-/* MediAssist — full analytics dashboard (staff only).
+/* SWASTHYA PRATHAM — full analytics dashboard (staff only).
    Data: GET /api/analytics/summary (server-side aggregation of triage log + checkups).
    Advisory/operational metrics only — no diagnostic conclusions. */
 'use strict';

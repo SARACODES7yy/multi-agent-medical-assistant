@@ -1,4 +1,4 @@
-/* MediAssist — Triage client logic (port). Wires intake, OCR, AI note, queue, referral, analytics, audit, timeline to existing backend endpoints. */
+/* SWASTHYA PRATHAM — Triage client logic (port). Wires intake, OCR, AI note, queue, referral, analytics, audit, timeline to existing backend endpoints. */
 'use strict';
 
 /* ---------- DOM helpers ---------- */

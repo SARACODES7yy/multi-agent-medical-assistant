@@ -1,4 +1,4 @@
-# MediAssist — Multi-Agent Medical Triage Assistant
+# SWASTHYA PRATHAM — Multi-Agent Medical Triage Assistant
 
 A working prototype of a multi-agent **medical triage + care-coordination** platform for low-resource
 health settings (public hospitals, PHCs, industrial/campus health units). It is a **live system running
