@@ -39,6 +39,15 @@ OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/ap
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/auto")
 OPENROUTER_MAX_TOKENS = int(os.getenv("OPENROUTER_MAX_TOKENS", "8192"))
 
+# Cloudflare Workers AI
+CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID")
+CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN")
+CLOUDFLARE_AI_MODEL = os.getenv("CLOUDFLARE_AI_MODEL", "@cf/meta/llama-4-scout-17b-16e-instruct")
+CLOUDFLARE_BASE_URL = (
+    f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1"
+    if CLOUDFLARE_ACCOUNT_ID else ""
+)
+
 _GROQ_VERIFIED = None
 
 
@@ -128,12 +137,34 @@ def openrouter_llm(temperature=0.1, **kw):
     return inner.with_retry(retry_if_exception_type=(Exception,), stop_after_attempt=2)
 
 
+def cloudflare_llm(temperature=0.1, **kw):
+    """LLM via Cloudflare Workers AI (OpenAI-compatible)."""
+    if not CLOUDFLARE_API_TOKEN or not CLOUDFLARE_ACCOUNT_ID:
+        raise ValueError("Cloudflare Workers AI credentials missing (CLOUDFLARE_API_TOKEN/ACCOUNT_ID)")
+    from langchain_openai import ChatOpenAI
+
+    inner = ChatOpenAI(
+        model=CLOUDFLARE_AI_MODEL,
+        temperature=temperature,
+        max_tokens=int(os.getenv("CLOUDFLARE_MAX_TOKENS", "8192")),
+        api_key=CLOUDFLARE_API_TOKEN,
+        base_url=CLOUDFLARE_BASE_URL,
+        **kw,
+    )
+    return inner.with_retry(retry_if_exception_type=(Exception,), stop_after_attempt=2)
+
+
 def llm(temperature=0.1, **kw):
-    """Primary text LLM. Groq (text-only, works with OCR text) → OpenRouter → Gemini."""
+    """Primary text LLM. Groq (text-only, works with OCR text) → OpenRouter → Cloudflare → Gemini."""
     if _GROQ_AVAILABLE and GROQ_API_KEY:
         return groq_llm(temperature=temperature, **kw)
     if OPENROUTER_API_KEY and _OPENROUTER_AVAILABLE:
         return openrouter_llm(temperature=temperature, **kw)
+    if CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID:
+        try:
+            return cloudflare_llm(temperature=temperature, **kw)
+        except Exception:
+            pass
     return gemini_llm(temperature=temperature, **kw)
 
 
@@ -247,10 +278,27 @@ class MedicalImageConfig:
         # Vision needs a genuinely vision-capable model: prefer Gemini when a
         # Google key is configured (Groq's text-only models cannot read images).
         _has_google_key = bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"))
-        self.vision_llm = (_vision_llm() if _has_google_key
-                           else (openrouter_llm(temperature=0.1)
-                                 if OPENROUTER_API_KEY
-                                 else (groq_llm(temperature=0.1) if _GROQ_AVAILABLE and GROQ_API_KEY else _vision_llm())))
+        candidates = []
+        if _has_google_key:
+            candidates.append(_vision_llm())
+        if OPENROUTER_API_KEY:
+            try:
+                candidates.append(openrouter_llm(temperature=0.1))
+            except Exception:
+                pass
+        if CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID:
+            try:
+                candidates.append(cloudflare_llm(temperature=0.1))
+            except Exception:
+                pass
+        if _GROQ_AVAILABLE and GROQ_API_KEY:
+            try:
+                candidates.append(groq_llm(temperature=0.1))
+            except Exception:
+                pass
+        if not candidates:
+            candidates.append(_vision_llm())
+        self.vision_llm = candidates[0]
         self.llm = self.ocr_llm
 
 
