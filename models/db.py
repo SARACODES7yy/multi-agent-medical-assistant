@@ -1065,6 +1065,12 @@ class SupabaseDB(Database):
         self.service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
         self.postgres_uri = os.getenv("SUPABASE_POSTGRES_URI")
         self.client = create_client(self.url, self.anon_key)
+        try:
+            self.admin = create_client(self.url, self.service_role_key) if self.service_role_key else None
+        except Exception as e:
+            logger.warning(f"Supabase admin client unavailable (service-role writes disabled): {e}")
+            self.admin = None
+        self._audit_fallback = None
         self._ensure_schema()
         logger.info("Supabase DB initialized")
 
@@ -1197,6 +1203,11 @@ class SupabaseDB(Database):
             THEN CREATE POLICY "ambulance_requests_insert" ON ambulance_requests FOR INSERT WITH CHECK (true); END IF;
             IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'ambulance_requests'::regclass AND polname = 'ambulance_requests_update')
             THEN CREATE POLICY "ambulance_requests_update" ON ambulance_requests FOR UPDATE USING (true); END IF;
+            ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'audit_log'::regclass AND polname = 'audit_log_select')
+            THEN CREATE POLICY "audit_log_select" ON audit_log FOR SELECT USING (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'audit_log'::regclass AND polname = 'audit_log_insert')
+            THEN CREATE POLICY "audit_log_insert" ON audit_log FOR INSERT WITH CHECK (true); END IF;
         END $$;
         """
 
@@ -1721,19 +1732,43 @@ class SupabaseDB(Database):
                 "action": action or "", "detail": detail or "", "session_id": session_id or "",
                 "created_at": self._now(),
             }
-            r = self.client.table("audit_log").insert(row).execute()
+            client = self.admin or self.client
+            r = client.table("audit_log").insert(row).execute()
             return r.data[0] if r and r.data else row
         except Exception as e:
             logger.warning(f"Supabase add_audit failed (remote table may need privileges): {e}")
+            try:
+                if self._audit_fallback is None:
+                    import sqlite3
+                    ddir = os.getenv("DATA_DIR", "./data").rstrip("/\\")
+                    os.makedirs(ddir, exist_ok=True)
+                    self._audit_fallback = sqlite3.connect(os.path.join(ddir, "supabase_audit_fallback.db"), check_same_thread=False)
+                    self._audit_fallback.execute("CREATE TABLE IF NOT EXISTS audit_log (id TEXT PRIMARY KEY,user_id TEXT,role TEXT,action TEXT,detail TEXT,session_id TEXT,created_at TEXT)")
+                    self._audit_fallback.commit()
+                cur = self._audit_fallback.cursor()
+                cur.execute("INSERT INTO audit_log (id,user_id,role,action,detail,session_id,created_at) VALUES (?,?,?,?,?,?,?)",
+                            (row["id"], row["user_id"], row["role"], row["action"], row["detail"], row["session_id"], row["created_at"]))
+                self._audit_fallback.commit()
+            except Exception as ex:
+                logger.warning(f"Supabase audit fallback failed: {ex}")
             return None
 
     def get_audit_log(self, limit=500):
         try:
-            r = self.client.table("audit_log").select("*") \
+            client = self.admin or self.client
+            r = client.table("audit_log").select("*") \
                 .order("created_at", desc=True).limit(limit).execute()
             return r.data if r and r.data else []
         except Exception as e:
             logger.warning(f"Supabase get_audit_log failed: {e}")
+            try:
+                if self._audit_fallback is not None:
+                    cur = self._audit_fallback.cursor()
+                    cur.execute("SELECT id,user_id,role,action,detail,session_id,created_at FROM audit_log ORDER BY created_at DESC LIMIT ?", (limit,))
+                    rows = [dict(zip([d[0] for d in cur.description], row)) for row in cur.fetchall()]
+                    return rows
+            except Exception as ex:
+                logger.warning(f"Supabase audit fallback read failed: {ex}")
             return []
 
     def delete_user_data(self, user_id):
@@ -1746,19 +1781,20 @@ class SupabaseDB(Database):
             ("doctor_instructions", "patient_id"), ("health_checkups", "patient_id"),
             ("doctor_availability", "doctor_id"), ("profiles", "user_id"),
         ]
+        client = self.admin or self.client
         for table, col in tables:
             try:
-                r = self.client.table(table).delete().eq(col, user_id).execute()
+                r = client.table(table).delete().eq(col, user_id).execute()
                 removed += len(r.data or [])
             except Exception as e:
                 logger.warning(f"Supabase delete_user_data {table} skipped: {e}")
         try:
-            r = self.client.table("call_bookings").delete().or_(f"patient_id.eq.{user_id},doctor_id.eq.{user_id}").execute()
+            r = client.table("call_bookings").delete().or_(f"patient_id.eq.{user_id},doctor_id.eq.{user_id}").execute()
             removed += len(r.data or [])
         except Exception as e:
             logger.warning(f"Supabase delete_user_data call_bookings skipped: {e}")
         try:
-            r = self.client.table("users").delete().eq("id", user_id).execute()
+            r = client.table("users").delete().eq("id", user_id).execute()
             removed += len(r.data or [])
         except Exception as e:
             logger.warning(f"Supabase delete_user_data users failed: {e}")
