@@ -392,21 +392,35 @@ async def chat(
                 return {"status": "success", "response": _note_cached[1], "agent": _note_cached[2], "session_id": _note_cached[3]}
             try:
                 from langchain_core.messages import HumanMessage as _NoteHuman, SystemMessage as _NoteSystem
-                _ai = _get_triage_note_llm().invoke([
-                    _NoteSystem(content=(
-                        "You summarize patient intake into a structured triage note for an educational, "
-                        "non-diagnostic prototype. Output ONLY valid JSON exactly as instructed by the user "
-                        "(a ```json fenced block is acceptable). Never diagnose and never prescribe."
-                    )),
-                    _NoteHuman(content=query_text),
-                ])
-                _text = _ai.content if hasattr(_ai, "content") else str(_ai)
-                if isinstance(_text, list):
-                    _text = " ".join(str(c) for c in _text)
+                _sys = (
+                    "You summarize patient intake into a structured triage note for an educational, "
+                    "non-diagnostic prototype. Output ONLY one valid JSON object exactly as instructed "
+                    "by the user (a ```json fenced block is acceptable). CRITICAL: every key and every "
+                    "string value MUST be enclosed in double quotes. Never diagnose and never prescribe."
+                )
+                _text = ""
+                _ok = False
+                for _attempt in range(2):
+                    _ai = _get_triage_note_llm().invoke([
+                        _NoteSystem(content=_sys),
+                        _NoteHuman(content=query_text if _attempt == 0 else
+                                   query_text + "\n\nREMINDER: output ONLY one valid JSON object; "
+                                   "quote every string value with double quotes."),
+                    ])
+                    _text = _ai.content if hasattr(_ai, "content") else str(_ai)
+                    if isinstance(_text, list):
+                        _text = " ".join(str(c) for c in _text)
+                    _fixed = _normalize_note_json(_text)
+                    if _fixed:
+                        _text = _fixed
+                        _ok = True
+                        break
+                    logger.warning(f"triage-note reply not valid JSON (attempt {_attempt + 1}); retrying")
                 if user_id:
                     db.add_message(user_id, "assistant", _text, agent="TRIAGE_NOTE_AGENT")
                 response.set_cookie(key="session_id", value=session_id)
-                _ai_response_cache[_note_key] = (time.time(), _text, "TRIAGE_NOTE_AGENT", session_id, {})
+                if _ok:
+                    _ai_response_cache[_note_key] = (time.time(), _text, "TRIAGE_NOTE_AGENT", session_id, {})
                 return {"status": "success", "response": _text, "agent": "TRIAGE_NOTE_AGENT"}
             except Exception as e:
                 _s = str(e)
@@ -875,8 +889,13 @@ def augment_query(query: str, session_id: Optional[str] = Cookie(None)) -> str:
     return query
 
 
-def _extract_json_block(text: str) -> Optional[dict]:
-    """Extract the first balanced JSON object from an LLM response (or None)."""
+def _extract_json_block(text: str, _is_repair: bool = False) -> Optional[dict]:
+    """Extract the first balanced JSON object from an LLM response (or None).
+
+    Tolerates literal control characters (strict=False) and, if extraction or
+    parsing fails, retries once after repairing the common LLM defect of an
+    unquoted value (e.g. ``"name": Cardiac Troponin I",``).
+    """
     import json as _json
     t = text or ""
     b = t.find("{")
@@ -897,7 +916,29 @@ def _extract_json_block(text: str) -> Optional[dict]:
                 if depth == 0: end = i; break
     if end > b:
         try:
-            return _json.loads(t[b:end + 1])
+            return _json.loads(t[b:end + 1], strict=False)
+        except Exception:
+            pass
+    if not _is_repair:
+        # Repair pass (only reached when the normal path failed): quote unquoted
+        # values, then re-run extraction on the repaired text.
+        import re as _re
+        repaired = _re.sub(r'(:\s*)([A-Za-z][^"\r\n{}[\],]*?)"', r'\1"\2"', t)
+        if repaired != t:
+            return _extract_json_block(repaired, _is_repair=True)
+    return None
+
+
+def _normalize_note_json(text: str) -> Optional[str]:
+    """Return a guaranteed-parseable JSON string from an LLM note reply, or None.
+
+    Re-emits the parsed object via json.dumps so the browser's extractJson can
+    never fail on stray control characters or formatting quirks.
+    """
+    block = _extract_json_block(text)
+    if isinstance(block, dict) and block:
+        try:
+            return json.dumps(block, ensure_ascii=False)
         except Exception:
             return None
     return None
