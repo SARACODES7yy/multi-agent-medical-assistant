@@ -256,6 +256,8 @@
 .triage-missing { color: var(--amber); }
 .triage-finding-card { border: 1px solid var(--line); border-radius: var(--r-xs); padding: 8px 10px; }
 .triage-file-block { border: 1px dashed var(--line); border-radius: var(--r-xs); padding: 9px 10px 10px; margin-bottom: 12px; }
+@keyframes triage-block-flash { 0% { box-shadow: 0 0 0 2px rgba(52,211,153,.95); } 100% { box-shadow: 0 0 0 2px rgba(52,211,153,0); } }
+.triage-file-block.is-new { animation: triage-block-flash 1.7s ease-out 1; border-style: solid; border-color: #34d399; }
 .triage-file-block-head { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; color: var(--ink-dim); margin-bottom: 8px; }
 .triage-file-block .triage-finding-card { margin-bottom: 6px; }
 .triage-file-block .triage-finding-card:last-child { margin-bottom: 0; }

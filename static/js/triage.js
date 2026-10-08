@@ -516,11 +516,16 @@ function processFile(file, rec) {
       ex.insertAdjacentHTML('beforeend', html);
       ex.dataset.fileIndex = String(fi2 + 1);
       var lastBlk = ex.lastElementChild;
-      if (lastBlk && lastBlk.scrollIntoView) { try { lastBlk.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) { lastBlk.scrollIntoView(); } }
+      if (lastBlk) {
+        lastBlk.classList.add('is-new');
+        setTimeout(function() { lastBlk.classList.remove('is-new'); }, 1800);
+        if (lastBlk.scrollIntoView) { try { lastBlk.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) { lastBlk.scrollIntoView(); } }
+      }
     }
     rec.status = 'done'; rec.progress = 100; rec.testCount = tests.length;
     addAudit('ocr', 'OCR processed ' + file.name + ' — ' + tests.length + ' findings extracted.');
     renderFileQueue(); toggleGenerate();
+    showToast('<i class="fas fa-circle-check me-1"></i><strong>' + esc(file.name) + '</strong> processed — ' + tests.length + ' findings added below');
   });
   xhr.addEventListener('error', function() {
     rec.status = 'error'; rec.error = 'Network error during upload.';
@@ -1901,4 +1906,18 @@ function renderHeroStats() {
 }
 
 /* ---------- Boot ---------- */
+function checkAppVersion() {
+  try {
+    var el = document.querySelector('script[src*="triage.js"]');
+    var m = el && el.src.match(/[?&]v=(\d+)/);
+    var mine = m ? m[1] : '';
+    if (!mine) return;
+    fetch('/version', { credentials: 'same-origin' }).then(function(r) { return r.json(); }).then(function(d) {
+      if (d && d.js && String(d.js) !== String(mine)) {
+        showToast('<i class="fas fa-rotate me-1"></i><strong>App updated</strong> — refresh this page (Ctrl+Shift+R) to get the latest fixes', true);
+      }
+    }).catch(function() {});
+  } catch (e) {}
+}
 if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', init); } else { init(); }
+setTimeout(checkAppVersion, 4000);

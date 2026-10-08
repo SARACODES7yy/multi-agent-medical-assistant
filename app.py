@@ -186,6 +186,22 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 # Set up templates
 templates = Jinja2Templates(directory="templates")
 
+# Frontend build marker — bump whenever triage.js changes so a stale browser tab
+# can detect it is out of date (GET /version + checkAppVersion() in triage.js).
+TRIAGE_JS_VERSION = "14"
+
+@app.get("/version")
+def app_version():
+    return {"js": TRIAGE_JS_VERSION}
+
+@app.middleware("http")
+async def no_store_html(request, call_next):
+    """HTML must always be re-fetched — a cached page keeps old JS alive."""
+    resp = await call_next(request)
+    if "text/html" in (resp.headers.get("content-type") or ""):
+        resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    return resp
+
 # Initialize ElevenLabs client
 client = ElevenLabs(
     api_key=config.speech.eleven_labs_api_key,
