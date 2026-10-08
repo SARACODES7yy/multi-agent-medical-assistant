@@ -45,6 +45,9 @@ SIGNALS = {
         ["breathlessness|breathing trouble|gasping", 1, "Breathlessness"],
         ["uncontrolled diabetes|blood sugar very high", 1, "Uncontrolled diabetes"],
         ["dangerous|not improving|getting worse|worsening", 1, "Condition worsening"],
+        ["severe pain|excruciating pain", 1, "Severe pain"],
+        ["weight loss|unintentional weight loss", 1, "Unintentional weight loss"],
+        ["cancer|malignancy|carcinoma|tumor|neoplasm|metastatic|metastasis|oncology", 2, "Suspected malignancy"],
     ],
     "standard": [
         ["moderate pain|moderate fever|mild fever|low grade fever", 0, "Moderate symptoms"],

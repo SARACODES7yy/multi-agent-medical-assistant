@@ -73,7 +73,8 @@ var SIGNALS = {
     ['difficulty swallowing|unable to swallow', 1, 'Dysphagia'], ['jaundice|yellow eyes|yellow skin', 1, 'Jaundice'],
     ['rapid heart rate|palpitations|racing heart', 1, 'Tachycardia'], ['severe abdominal pain|acute abdomen', 1, 'Severe abdominal pain'],
     ['breathlessness|breathing trouble|gasping', 1, 'Breathlessness'], ['uncontrolled diabetes|blood sugar very high', 1, 'Uncontrolled diabetes'],
-    ['dangerous|not improving|getting worse|worsening', 1, 'Condition worsening']
+    ['dangerous|not improving|getting worse|worsening', 1, 'Condition worsening'], ['severe pain|excruciating pain', 1, 'Severe pain'],
+    ['weight loss|unintentional weight loss', 1, 'Unintentional weight loss'], ['cancer|malignancy|carcinoma|tumor|neoplasm|metastatic|metastasis|oncology', 2, 'Suspected malignancy']
   ],
   standard: [
     ['moderate pain|moderate fever|mild fever|low grade fever', 0, 'Moderate symptoms'], ['cough|cold|runny nose|sneezing', 0, 'Respiratory symptoms'],
