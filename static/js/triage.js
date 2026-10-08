@@ -588,7 +588,7 @@ async function generate() {
     var note = await aiNote(pkg);
     state.note = note; applyNote(note);
   } catch (e) {
-    if ($('#intake-error')) { $('#intake-error').textContent = 'AI summarizer could not be reached — a rule-based draft is shown instead. Verify your connection or try again.'; $('#intake-error').style.display = ''; }
+    if ($('#intake-error')) { $('#intake-error').textContent = 'AI summarizer could not be reached — a rule-based draft is shown instead' + (e && e.message ? ' (' + e.message + ')' : '') + '. Verify your connection or try again.'; $('#intake-error').style.display = ''; }
     state.note = ruleBasedNote(pkg); state.note.fallback = 'rule-fallback'; applyNote(state.note);
   }
   saveSession(); pushSession(); toggleGenerateState();
@@ -609,14 +609,23 @@ function aiNote(pkg) {
   var prompt = 'You are a triage-assistant summarizer operating inside an educational, non-diagnostic prototype. Produce a STRICT JSON object only (wrap it in ```json ... ``` if needed, but also produce raw JSON parseable). Do not diagnose or prescribe. Use this patient intake package:\n\n' + parts.join('\n') + '\n\nOutput this JSON only:\n' +
     '{\n"summary":"one-line chief complaint summary",\n"chief_complaints":["array of up to 4 verbatim phrases"],\n"timeline":"chronology of onset/progression in 1-3 sentences",\n"expected_findings":"what physical/clinical findings are expected based on the narrative",\n"red_flags":["list of urgency signals found (never a diagnosis)"],\n"missing_info":["information still missing for a complete review"],\n"followup_questions":["short clinician-facing questions"],\n"tests":[{"name":"test","value":"numeric result","unit":"unit","flag":"low|high|normal|critical|unknown"}],\n"risk":"emergency|urgent|standard|routine","score":0,' +
     '"rationale":"concise reason for the risk level"\n}\nRules: risk = emergency if any red flag signals chest/airway/unconsciousness/seizure/stroke/major trauma/anaphylaxis/poisoning; urgent if persistent fever/severe pain/blood/rapid worsening; otherwise standard or routine. Score = 0-100 integer. Return ONLY valid JSON.';
-  return fetch('/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ query: prompt, conversation_history: [] }) })
-    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  return fetch('/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ query: prompt, conversation_history: [], purpose: 'triage_note' }) })
+    .then(function(r) {
+      if (!r.ok) {
+        return r.json().catch(function() { return {}; }).then(function(err) {
+          var e2 = new Error((err && err.detail) ? String(err.detail) : ('HTTP ' + r.status));
+          e2.httpStatus = r.status;
+          throw e2;
+        });
+      }
+      return r.json();
+    })
     .then(function(d) {
-      if (d.status === 'validation_required') return ruleBasedNote(pkg);
+      if (d.status === 'validation_required') throw new Error('the server asked for human validation first');
       var txt = d.response || '';
       var note = extractJson(txt) || extractJsonBlock(txt);
       if (note && normalizeNote(note)) return normalizeNote(note);
-      return ruleBasedNote(pkg);
+      throw new Error('the AI reply was not valid JSON');
     });
 }
 

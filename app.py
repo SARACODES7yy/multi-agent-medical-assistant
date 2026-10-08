@@ -20,8 +20,22 @@ import hashlib
 # ---- short-answer AI dedupe cache (quota-friendly; keyed by exact narrative) ----
 _ai_response_cache: Dict[str, tuple] = {}
 _AI_CACHE: Dict[str, tuple] = {}
-_ai_response_cache: Dict[str, tuple] = {}
 _AI_CACHE_TTL = 300
+
+# ---- Structured triage-note fast path ---------------------------------------
+# The note prompt from the UI is machine-generated JSON instruction text, not a
+# user question. Running it through the router/RAG/web-search graph risks a
+# non-JSON answer (or a validation detour), which silently drops the UI back to
+# the rule-based draft. Call the LLM directly instead.
+_TRIAGE_NOTE_MARKER = "triage-assistant summarizer"
+_TRIAGE_LLM = None
+
+def _get_triage_note_llm():
+    global _TRIAGE_LLM
+    if _TRIAGE_LLM is None:
+        from config import llm as _make_llm
+        _TRIAGE_LLM = _make_llm(temperature=0.1)
+    return _TRIAGE_LLM
 
 def _ai_cache_lookup(key):
     v = _AI_CACHE.get(key)
@@ -304,6 +318,7 @@ async def chat(
     has_file = False
     file_path = None
     query_text = ""
+    _req_purpose = ""
     filename_str = ""
     is_img_file = False
     is_pdf_file = False
@@ -353,6 +368,7 @@ async def chat(
         try:
             body = await request.json()
             query_text = (body.get("query") or body.get("text") or "").strip() if isinstance(body, dict) else ""
+            _req_purpose = str(body.get("purpose") or "") if isinstance(body, dict) else ""
         except Exception:
             query_text = ""
 
@@ -367,6 +383,39 @@ async def chat(
                 db.add_message(user_id, "user", query_text)
         if not session_id:
             session_id = str(uuid.uuid4())
+        # --- Fast path: structured triage-note prompt -> direct LLM (no router/RAG/web search) ---
+        if _TRIAGE_NOTE_MARKER in (query_text or "") or _req_purpose == "triage_note":
+            _note_key = hashlib.sha256(("note|" + query_text + "|" + (user_id or "")).encode("utf-8")).hexdigest()
+            _note_cached = _ai_response_cache.get(_note_key)
+            if _note_cached and (time.time() - _note_cached[0]) < 300:
+                response.set_cookie(key="session_id", value=_note_cached[3])
+                return {"status": "success", "response": _note_cached[1], "agent": _note_cached[2], "session_id": _note_cached[3]}
+            try:
+                from langchain_core.messages import HumanMessage as _NoteHuman, SystemMessage as _NoteSystem
+                _ai = _get_triage_note_llm().invoke([
+                    _NoteSystem(content=(
+                        "You summarize patient intake into a structured triage note for an educational, "
+                        "non-diagnostic prototype. Output ONLY valid JSON exactly as instructed by the user "
+                        "(a ```json fenced block is acceptable). Never diagnose and never prescribe."
+                    )),
+                    _NoteHuman(content=query_text),
+                ])
+                _text = _ai.content if hasattr(_ai, "content") else str(_ai)
+                if isinstance(_text, list):
+                    _text = " ".join(str(c) for c in _text)
+                if user_id:
+                    db.add_message(user_id, "assistant", _text, agent="TRIAGE_NOTE_AGENT")
+                response.set_cookie(key="session_id", value=session_id)
+                _ai_response_cache[_note_key] = (time.time(), _text, "TRIAGE_NOTE_AGENT", session_id, {})
+                return {"status": "success", "response": _text, "agent": "TRIAGE_NOTE_AGENT"}
+            except Exception as e:
+                _s = str(e)
+                if 'rate' in _s.lower() or 'quota' in _s.lower():
+                    import re as _re
+                    _m = _re.search(r'retry_delay[{\s]+seconds[{\s]+(\d+(?:\.\d+)?)', _s)
+                    _delay = float(_m.group(1)) if _m else 60
+                    raise HTTPException(status_code=429, detail=f"API rate limit reached. Please retry in {int(_delay)} seconds.")
+                raise HTTPException(status_code=500, detail=str(e))
         _dedupe_key = hashlib.sha256((augmented + "|" + (user_id or "")).encode("utf-8")).hexdigest()
         _dedupe = _ai_response_cache.get(_dedupe_key)
         if _dedupe and (time.time() - _dedupe[0]) < 300:
