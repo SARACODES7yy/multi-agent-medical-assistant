@@ -8,12 +8,12 @@
 var I18N_LANGS = [
   { code: 'en', label: 'English', native: 'English' },
   { code: 'hi', label: 'Hindi', native: 'Hindi' },
+  { code: 'or', label: 'Odia', native: 'Odia' },
   { code: 'bn', label: 'Bengali', native: 'Bengali' },
   { code: 'ta', label: 'Tamil', native: 'Tamil' },
   { code: 'te', label: 'Telugu', native: 'Telugu' },
   { code: 'mr', label: 'Marathi', native: 'Marathi' },
-  { code: 'gu', label: 'Gujarati', native: 'Gujarati' },
-  { code: 'or', label: 'Odia', native: 'Odia' }
+  { code: 'gu', label: 'Gujarati', native: 'Gujarati' }
 ];
 
 var I18N_DICT = {};
