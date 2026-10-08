@@ -185,6 +185,15 @@ class Database:
     def get_recent_lab_results(self, user_id=None, limit=100):
         raise NotImplementedError
 
+    def insert_report(self, report):
+        raise NotImplementedError
+
+    def get_reports(self, user_id=None, limit=100):
+        raise NotImplementedError
+
+    def get_report(self, report_id):
+        raise NotImplementedError
+
     def create_notification(self, user_id, kind, title, body="", link=""):
         raise NotImplementedError
 
@@ -404,6 +413,24 @@ class SQLiteDB(Database):
             flags TEXT DEFAULT '[]',
             created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS medical_reports (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            filename TEXT DEFAULT '',
+            file_type TEXT DEFAULT '',
+            file_size INTEGER DEFAULT 0,
+            doc_type TEXT DEFAULT '',
+            ocr_text TEXT DEFAULT '',
+            key_values TEXT DEFAULT '[]',
+            abnormal_flags TEXT DEFAULT '[]',
+            summary TEXT DEFAULT '',
+            clinical_insight TEXT DEFAULT '',
+            missing_info TEXT DEFAULT '[]',
+            file_path TEXT DEFAULT '',
+            sha256 TEXT DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_medical_reports_user_id ON medical_reports (user_id);
         CREATE TABLE IF NOT EXISTS notifications (
             id TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
@@ -846,6 +873,65 @@ class SQLiteDB(Database):
             out.append(d)
         return out
 
+    def insert_report(self, report):
+        row = dict(report)
+        row.setdefault("id", str(uuid.uuid4()))
+        row.setdefault("file_type", "")
+        row.setdefault("file_size", 0)
+        row.setdefault("doc_type", "")
+        row.setdefault("ocr_text", "")
+        row.setdefault("summary", "")
+        row.setdefault("clinical_insight", "")
+        row.setdefault("file_path", "")
+        row.setdefault("sha256", "")
+        row["key_values"] = _json_list(row.get("key_values")) or "[]"
+        row["abnormal_flags"] = _json_list(row.get("abnormal_flags")) or "[]"
+        row["missing_info"] = _json_list(row.get("missing_info")) or "[]"
+        row.setdefault("created_at", self._now())
+        conn = self._connect()
+        conn.execute(
+            "INSERT INTO medical_reports (id,user_id,filename,file_type,file_size,doc_type,ocr_text,key_values,abnormal_flags,summary,clinical_insight,missing_info,file_path,sha256,created_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (row["id"], row["user_id"], row["filename"], row["file_type"], int(row["file_size"] or 0),
+             row["doc_type"], row["ocr_text"], row["key_values"], row["abnormal_flags"], row["summary"],
+             row["clinical_insight"], row["missing_info"], row["file_path"], row["sha256"], row["created_at"])
+        )
+        conn.commit(); conn.close()
+        return self.get_report(row["id"])
+
+    def get_reports(self, user_id=None, limit=100):
+        conn = self._connect()
+        if user_id:
+            rows = conn.execute(
+                "SELECT * FROM medical_reports WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+                (user_id, limit)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM medical_reports ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        conn.close()
+        out = []
+        for r in rows:
+            d = dict(r)
+            for k in ("key_values", "abnormal_flags", "missing_info"):
+                d[k] = _as_list(d.get(k))
+            out.append(d)
+        return out
+
+    def get_report(self, report_id):
+        conn = self._connect()
+        try:
+            r = conn.execute("SELECT * FROM medical_reports WHERE id=?", (report_id,)).fetchone()
+        finally:
+            conn.close()
+        if not r:
+            return None
+        d = dict(r)
+        for k in ("key_values", "abnormal_flags", "missing_info"):
+            d[k] = _as_list(d.get(k))
+        return d
+
     def create_notification(self, user_id, kind, title, body="", link=""):
         nid = str(uuid.uuid4())
         now = self._now()
@@ -1029,6 +1115,7 @@ class SQLiteDB(Database):
         tables = [
             ("notifications", "user_id"),
             ("lab_results", "user_id"),
+            ("medical_reports", "user_id"),
             ("triage_sessions", "user_id"),
             ("soap_notes", "patient_id"),
             ("prescriptions", "patient_id"),
@@ -1182,6 +1269,11 @@ class SupabaseDB(Database):
             THEN CREATE POLICY "lab_results_select" ON lab_results FOR SELECT USING (true); END IF;
             IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'lab_results'::regclass AND polname = 'lab_results_insert')
             THEN CREATE POLICY "lab_results_insert" ON lab_results FOR INSERT WITH CHECK (true); END IF;
+            ALTER TABLE medical_reports ENABLE ROW LEVEL SECURITY;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'medical_reports'::regclass AND polname = 'medical_reports_select')
+            THEN CREATE POLICY "medical_reports_select" ON medical_reports FOR SELECT USING (true); END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'medical_reports'::regclass AND polname = 'medical_reports_insert')
+            THEN CREATE POLICY "medical_reports_insert" ON medical_reports FOR INSERT WITH CHECK (true); END IF;
             ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
             IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'notifications'::regclass AND polname = 'notifications_select')
             THEN CREATE POLICY "notifications_select" ON notifications FOR SELECT USING (true); END IF;
@@ -1576,6 +1668,60 @@ class SupabaseDB(Database):
             logger.error(f"Supabase get_recent_lab_results failed: {e}")
             return []
 
+    def insert_report(self, report):
+        try:
+            row = dict(report)
+            row.setdefault("id", str(uuid.uuid4()))
+            row.setdefault("file_type", "")
+            row.setdefault("file_size", 0)
+            row.setdefault("doc_type", "")
+            row.setdefault("ocr_text", "")
+            row.setdefault("summary", "")
+            row.setdefault("clinical_insight", "")
+            row.setdefault("file_path", "")
+            row.setdefault("sha256", "")
+            row["key_values"] = _json_list(row.get("key_values")) or "[]"
+            row["abnormal_flags"] = _json_list(row.get("abnormal_flags")) or "[]"
+            row["missing_info"] = _json_list(row.get("missing_info")) or "[]"
+            row.setdefault("created_at", self._now())
+            client = self.admin or self.client
+            r = client.table("medical_reports").insert(row).execute()
+            if r and r.data:
+                return self.get_report(row["id"])
+            return self.get_report(row["id"])
+        except Exception as e:
+            logger.error(f"Supabase insert_report failed: {e}")
+            return None
+
+    def get_reports(self, user_id=None, limit=100):
+        try:
+            q = self.client.table("medical_reports").select("*")
+            if user_id:
+                q = q.eq("user_id", user_id)
+            r = q.order("created_at", desc=True).limit(limit).execute()
+            out = []
+            for d in (r.data if r and r.data else []):
+                for k in ("key_values", "abnormal_flags", "missing_info"):
+                    d[k] = _as_list(d.get(k))
+                out.append(d)
+            return out
+        except Exception as e:
+            logger.error(f"Supabase get_reports failed: {e}")
+            return []
+
+    def get_report(self, report_id):
+        try:
+            r = self.client.table("medical_reports").select("*").eq("id", report_id).limit(1).execute()
+            if r and r.data:
+                d = dict(r.data[0])
+                for k in ("key_values", "abnormal_flags", "missing_info"):
+                    d[k] = _as_list(d.get(k))
+                return d
+            return None
+        except Exception as e:
+            logger.error(f"Supabase get_report failed: {e}")
+            return None
+
     def create_notification(self, user_id, kind, title, body="", link=""):
         nid = str(uuid.uuid4())
         now = self._now()
@@ -1776,6 +1922,7 @@ class SupabaseDB(Database):
         removed = 0
         tables = [
             ("notifications", "user_id"), ("lab_results", "user_id"),
+            ("medical_reports", "user_id"),
             ("triage_sessions", "user_id"), ("soap_notes", "patient_id"),
             ("prescriptions", "patient_id"), ("invoices", "patient_id"),
             ("doctor_instructions", "patient_id"), ("health_checkups", "patient_id"),

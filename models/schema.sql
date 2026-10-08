@@ -158,6 +158,26 @@ CREATE TABLE IF NOT EXISTS lab_results (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS medical_reports (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    filename TEXT DEFAULT '',
+    file_type TEXT DEFAULT '',
+    file_size INTEGER DEFAULT 0,
+    doc_type TEXT DEFAULT '',
+    ocr_text TEXT DEFAULT '',
+    key_values TEXT DEFAULT '[]',
+    abnormal_flags TEXT DEFAULT '[]',
+    summary TEXT DEFAULT '',
+    clinical_insight TEXT DEFAULT '',
+    missing_info TEXT DEFAULT '[]',
+    file_path TEXT DEFAULT '',
+    sha256 TEXT DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_medical_reports_user_id ON medical_reports (user_id);
+
 CREATE TABLE IF NOT EXISTS notifications (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,

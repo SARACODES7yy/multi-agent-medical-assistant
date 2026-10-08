@@ -451,7 +451,11 @@
 .triage-records-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .triage-records-span { grid-column: 1 / -1; }
 .triage-records-list .triage-history-visit { cursor: default; }
-.triage-records-actions { margin-top: 8px; display: flex; gap: 8px; }
+.triage-records-actions { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.triage-report-raw { margin-top: 10px; border: 1px solid var(--line); border-radius: var(--r-md); padding: 8px 12px; background: var(--bg-raise); }
+.triage-report-raw summary { cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--ink-dim); }
+.triage-report-raw summary:hover { color: var(--ink); }
+.triage-report-raw pre { font-size: 11.5px; color: var(--ink-dim); margin-top: 8px; }
 
 /* ---------- About ---------- */
 .triage-about-text { font-size: 13.5px; color: var(--ink-dim); line-height: 1.65; margin-bottom: 8px; }

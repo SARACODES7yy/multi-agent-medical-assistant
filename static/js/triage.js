@@ -1402,10 +1402,12 @@ function renderRecords() {
   Promise.all([
     fetch('/api/prescriptions', { credentials: 'include' }).then(function(r) { return r.ok ? r.json() : null; }),
     fetch('/api/invoices', { credentials: 'include' }).then(function(r) { return r.ok ? r.json() : null; }),
-    fetch('/api/checkup/status', { credentials: 'include' }).then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; })
+    fetch('/api/checkup/status', { credentials: 'include' }).then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; }),
+    fetch('/api/reports?mine=1&limit=50', { credentials: 'include' }).then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; })
   ]).then(function(kit) {
     var rxs = (kit[0] && kit[0].status === 'ok' && kit[0].prescriptions) ? kit[0].prescriptions : [];
     var invs = (kit[1] && kit[1].status === 'ok' && kit[1].invoices) ? kit[1].invoices : [];
+    var reps = (kit[3] && kit[3].status === 'ok' && kit[3].reports) ? kit[3].reports : [];
     var ck = kit[2] || {};
     tally = rxs.length + invs.length;
     var badge = $('#records-badge'); if (badge) { badge.textContent = tally || ''; badge.style.display = tally ? '' : 'none'; }
@@ -1447,6 +1449,15 @@ function renderRecords() {
       });
       html += '</table>';
     }
+    html += '</div>';
+
+    /* Uploaded reports card */
+    html += '<div class="triage-card triage-records-span"><div class="triage-card-head"><h3><i class="fas fa-folder-open me-2 triage-violet"></i>' + esc(t('records.reports')) + '</h3><span class="triage-card-sub">' + esc(t('records.reportsSub')) + '</span></div>';
+    if (!reps.length) {
+      html += '<div class="triage-empty"><i class="fas fa-file-medical"></i><p>' + esc(t('records.noReports')) + '</p></div>';
+    } else {
+      html += '<div class="triage-records-list">' + reportsListHtml(reps, false) + '</div>';
+    }
     html += '</div></div>';
     wrap.innerHTML = html;
   }).catch(function() {
@@ -1459,6 +1470,77 @@ async function patientInvoicePaid(id) {
     var j = await r.json();
     if (j.status === 'ok') { showToast('<i class="fas fa-circle-check me-1"></i>Invoice marked paid'); renderRecords(); }
   } catch (e) {}
+}
+
+/* ---------- Uploaded reports (archive) ---------- */
+function reportsListHtml(reports, showPatient) {
+  return reports.map(function(rep) {
+    var badges = '';
+    if (rep.flag_count) badges += '<span class="triage-flag-pill triage-flag-critical">' + rep.flag_count + ' flags</span> ';
+    if (rep.test_count) badges += '<span class="triage-flag-pill triage-flag-unknown">' + rep.test_count + ' values</span>';
+    var who = showPatient && rep.patient_name ? '<span class="triage-code">' + esc(rep.patient_name) + '</span> ' : '';
+    var sum = rep.summary ? ' — ' + esc(String(rep.summary).slice(0, 140)) : '';
+    return '<div class="triage-history-visit">' +
+      '<div class="triage-history-visit-head">' + who + '<strong>' + esc(rep.filename || 'report') + '</strong><span class="triage-muted ms-auto">' + fmtDate(rep.created_at) + '</span></div>' +
+      '<div class="triage-history-visit-meta">' + esc(rep.doc_type || '') + (rep.file_size ? ' · ' + ocrFileSize(rep.file_size) : '') + sum + '</div>' +
+      '<div class="triage-records-actions">' + badges +
+      '<button class="btn-outline btn-sm" onclick="openReportModal(\'' + encodeURIComponent(rep.id) + '\')"><i class="fas fa-eye me-1"></i>View</button>' +
+      '</div></div>';
+  }).join('');
+}
+function loadStaffReports() {
+  var body = document.getElementById('patient-reports-body');
+  if (!body) return;
+  body.innerHTML = '<div class="triage-empty"><p>Loading reports…</p></div>';
+  fetch('/api/reports?limit=100', { credentials: 'include' })
+    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function(j) {
+      var reps = j.reports || [];
+      if (!reps.length) { body.innerHTML = '<div class="triage-empty"><i class="fas fa-folder-open"></i><p>' + esc(t('records.noReports')) + '</p></div>'; return; }
+      body.innerHTML = '<div class="triage-records-list">' + reportsListHtml(reps, true) + '</div>';
+    })
+    .catch(function() { body.innerHTML = '<div class="triage-empty"><i class="fas fa-triangle-exclamation"></i><p>Could not load reports.</p></div>'; });
+}
+function closeReportModal() { var m = document.getElementById('report-modal'); if (m) m.style.display = 'none'; }
+function openReportModal(reportId) {
+  var modal = document.getElementById('report-modal');
+  var body = document.getElementById('report-modal-body');
+  var title = document.getElementById('report-modal-title');
+  if (!modal || !body) return;
+  if (title) title.textContent = 'Report';
+  body.innerHTML = '<div class="triage-empty"><p>Loading…</p></div>';
+  modal.style.display = '';
+  fetch('/api/reports/' + encodeURIComponent(reportId), { credentials: 'include' })
+    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function(j) {
+      var rep = j.report || {};
+      if (title) title.textContent = rep.filename || 'Report';
+      var html = '';
+      html += '<p class="triage-card-sub">' + esc(rep.doc_type || '') + (rep.patient_name ? ' · ' + esc(rep.patient_name) : '') + (rep.file_size ? ' · ' + ocrFileSize(rep.file_size) : '') + ' · ' + fmtDate(rep.created_at) + '</p>';
+      if (rep.file_available) {
+        html += '<div class="triage-records-actions" style="margin:6px 0 12px;"><button class="btn-outline btn-sm" onclick="window.open(\'/api/reports/' + encodeURIComponent(rep.id) + '/file\',\'_blank\')"><i class="fas fa-file-pdf me-1"></i>Open original file</button></div>';
+      } else {
+        html += '<p class="triage-muted" style="margin:6px 0 12px;">Original file unavailable (storage cleaned on redeploy) — extracted data preserved.</p>';
+      }
+      var tests = rep.key_values || [];
+      if (tests.length) {
+        html += '<div class="triage-note-section"><h4>Extracted values</h4><div class="triage-finding-grid">';
+        tests.forEach(function(tv) {
+          if (typeof tv === 'string') { html += '<div class="triage-finding-card"><div class="triage-finding-test">' + esc(tv) + '</div></div>'; return; }
+          html += '<div class="triage-finding-card"><div class="triage-finding-test">' + esc(tv.name || '') + '</div><div class="triage-finding-value">' + esc(String(tv.value != null ? tv.value : '')) + ' ' + esc(tv.unit || '') + ' <span class="triage-flag-pill triage-flag-' + esc(tv.flag || 'unknown') + '">' + esc(tv.flag || 'unknown') + '</span></div></div>';
+        });
+        html += '</div></div>';
+      }
+      var flags = rep.abnormal_flags || [];
+      if (flags.length) {
+        html += '<div class="triage-note-section"><h4>Abnormal flags</h4><div class="triage-flag-row">' + flags.map(function(f) { return '<span class="triage-flag-item">' + esc(f) + '</span>'; }).join('') + '</div></div>';
+      }
+      if (rep.summary) html += '<div class="triage-note-section"><h4>AI Summary</h4><p style="white-space:pre-wrap;">' + esc(rep.summary) + '</p></div>';
+      if (rep.clinical_insight) html += '<div class="triage-note-section"><h4>Clinical Insight</h4><p style="white-space:pre-wrap;">' + esc(rep.clinical_insight) + '</p></div>';
+      if (rep.ocr_text) html += '<details class="triage-report-raw"><summary>Raw OCR / extraction text</summary><pre style="white-space:pre-wrap;max-height:300px;overflow:auto;">' + esc(rep.ocr_text) + '</pre></details>';
+      body.innerHTML = html;
+    })
+    .catch(function(e) { body.innerHTML = '<div class="triage-empty"><i class="fas fa-triangle-exclamation"></i><p>Could not load report (' + esc(e.message) + ')</p></div>'; });
 }
 
 /* ---------- Book Call ---------- */
@@ -1870,7 +1952,7 @@ function bindActions() {
 function switchTab(name) {
   $$('.triage-tab').forEach(function(t) { t.classList.toggle('is-active', t.getAttribute('data-tab') === name); t.setAttribute('aria-selected', t.getAttribute('data-tab') === name ? 'true' : 'false'); });
   $$('.triage-tabpanel').forEach(function(p) { p.classList.toggle('is-active', p.id === 'tab-' + name); });
-  if (name === 'reviewer') { refreshQueue(); if (state.isStaff) loadInvoices(); }
+  if (name === 'reviewer') { refreshQueue(); if (state.isStaff) { loadInvoices(); loadStaffReports(); } }
   if (name === 'analytics') renderAnalytics();
   if (name === 'audit') renderAudit();
   if (name === 'history') renderHistory();

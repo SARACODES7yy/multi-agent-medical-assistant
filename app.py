@@ -188,7 +188,7 @@ templates = Jinja2Templates(directory="templates")
 
 # Frontend build marker — bump whenever triage.js changes so a stale browser tab
 # can detect it is out of date (GET /version + checkAppVersion() in triage.js).
-TRIAGE_JS_VERSION = "15"
+TRIAGE_JS_VERSION = "16"
 
 @app.get("/version")
 def app_version():
@@ -853,10 +853,37 @@ async def ocr_extract(
             "raw_text": response_text,
         }
 
-        if session_id:
-            payload = verify_session_cookie(session_id)
-            if payload:
-                _persist_lab_flags(payload["user_id"], response_text, filename=filename)
+        payload = verify_session_cookie(session_id) if session_id else None
+        if payload:
+            _persist_lab_flags(payload["user_id"], response_text, filename=filename)
+            # Archive the full report (original file + input metadata + AI output)
+            # so patients and clinicians can revisit it later.
+            try:
+                archive_dir = os.path.join("reports", payload["user_id"])
+                os.makedirs(archive_dir, exist_ok=True)
+                ext = os.path.splitext(filename)[1].lower() or (".pdf" if is_pdf_file else ".png")
+                archive_path = os.path.join(archive_dir, f"{uuid.uuid4().hex}{ext}")
+                with open(archive_path, "wb") as af:
+                    af.write(file_content)
+                db.insert_report({
+                    "user_id": payload["user_id"],
+                    "filename": filename,
+                    "file_type": "pdf" if is_pdf_file else "image",
+                    "file_size": len(file_content),
+                    "doc_type": (block or {}).get("document_type", ""),
+                    "ocr_text": (response_text or "")[:200000],
+                    "key_values": (block or {}).get("key_values") or [],
+                    "abnormal_flags": (block or {}).get("abnormal_flags") or [],
+                    "summary": (block or {}).get("summary", "") or "",
+                    "clinical_insight": clinical_insight,
+                    "missing_info": (block or {}).get("missing_information") or [],
+                    "file_path": archive_path,
+                    "sha256": hashlib.sha256(file_content).hexdigest(),
+                })
+                db.add_audit(payload["user_id"], payload.get("role", ""), "report_uploaded",
+                             f"Archived uploaded report {filename}", session_id)
+            except Exception as arch_err:
+                logger.warning(f"report archive skipped: {arch_err}")
 
         return result
     except Exception as e:
@@ -870,6 +897,112 @@ async def ocr_extract(
             os.remove(file_path)
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Medical report archive — stored input + output of every OCR intake upload.
+# Patients see their own reports; doctors/nurses/admins see every patient's.
+# ---------------------------------------------------------------------------
+_STAFF_ROLES = ("doctor", "nurse", "admin")
+
+
+def _require_report_access(payload, report):
+    """Staff may open any report; patients only their own. Raises 404 if denied."""
+    if not payload:
+        raise HTTPException(status_code=401, detail="Login required")
+    if payload.get("role") in _STAFF_ROLES:
+        return
+    if report.get("user_id") != payload.get("user_id"):
+        # 404 (not 403) so report ids cannot be probed for existence.
+        raise HTTPException(status_code=404, detail="Report not found")
+
+
+def _report_patient_name(user_id):
+    try:
+        prof = db.get_profile(user_id) or {}
+        usr = db.get_user(user_id) or {}
+        return prof.get("name") or usr.get("name") or ""
+    except Exception:
+        return ""
+
+
+@app.get("/api/reports")
+def list_reports(
+    patient_id: Optional[str] = None,
+    limit: int = 100,
+    mine: bool = False,
+    session_id: Optional[str] = Cookie(None),
+):
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Login required")
+    role = payload.get("role", "")
+    if mine:
+        target_user = payload["user_id"]
+    elif role in _STAFF_ROLES:
+        target_user = patient_id or None
+    else:
+        if patient_id and patient_id != payload["user_id"]:
+            raise HTTPException(status_code=403, detail="Not allowed")
+        target_user = payload["user_id"]
+    rows = db.get_reports(user_id=target_user, limit=max(1, min(limit, 200)))
+    out = []
+    for r in rows:
+        slim = {k: r.get(k) for k in (
+            "id", "user_id", "filename", "file_type", "file_size", "doc_type",
+            "summary", "created_at", "sha256")}
+        slim["flag_count"] = len(r.get("abnormal_flags") or [])
+        slim["test_count"] = len(r.get("key_values") or [])
+        if role in _STAFF_ROLES:
+            slim["patient_name"] = _report_patient_name(r.get("user_id"))
+        out.append(slim)
+    return {"status": "ok", "reports": out}
+
+
+@app.get("/api/reports/{report_id}")
+def get_report_detail(report_id: str, session_id: Optional[str] = Cookie(None)):
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Login required")
+    report = db.get_report(report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    _require_report_access(payload, report)
+    report["patient_name"] = _report_patient_name(report.get("user_id"))
+    report["file_available"] = bool(report.get("file_path")) and os.path.exists(report.get("file_path") or "")
+    try:
+        db.add_audit(payload["user_id"], payload.get("role", ""), "report_viewed",
+                     f"Viewed report {report.get('filename', '')}", session_id)
+    except Exception:
+        pass
+    return {"status": "ok", "report": report}
+
+
+@app.get("/api/reports/{report_id}/file")
+def get_report_file(report_id: str, session_id: Optional[str] = Cookie(None)):
+    payload = verify_session_cookie(session_id)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Login required")
+    report = db.get_report(report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    _require_report_access(payload, report)
+    path = report.get("file_path") or ""
+    if not path or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Original file no longer available (cleaned on redeploy); all extracted data is preserved.")
+    lower = path.lower()
+    if lower.endswith(".pdf"):
+        media = "application/pdf"
+    elif lower.endswith((".jpg", ".jpeg")):
+        media = "image/jpeg"
+    else:
+        media = "image/png"
+    try:
+        db.add_audit(payload["user_id"], payload.get("role", ""), "report_downloaded",
+                     f"Downloaded report {report.get('filename', '')}", session_id)
+    except Exception:
+        pass
+    return FileResponse(path, media_type=media, filename=report.get("filename") or os.path.basename(path))
 
 
 def get_patient_context(session_id: Optional[str] = Cookie(None)) -> str:

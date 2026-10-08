@@ -185,6 +185,7 @@ uploads/skin_lesion_output/segmentation_plot.png
 # runtime data + generated files
 data/
 uploads/
+reports/
 certs/
 *.err
 _boot.log.*
