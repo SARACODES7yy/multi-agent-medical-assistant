@@ -196,10 +196,15 @@ def app_version():
 
 @app.middleware("http")
 async def no_store_html(request, call_next):
-    """HTML must always be re-fetched — a cached page keeps old JS alive."""
+    """HTML must always be re-fetched — a cached page keeps old JS alive.
+    Static assets get no-cache: the browser revalidates via ETag (cheap 304)
+    so a deploy takes effect immediately instead of heuristic browser caching
+    serving stale CSS/JS for hours."""
     resp = await call_next(request)
     if "text/html" in (resp.headers.get("content-type") or ""):
         resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    elif request.url.path.startswith("/static/"):
+        resp.headers["Cache-Control"] = "no-cache"
     return resp
 
 # Initialize ElevenLabs client
