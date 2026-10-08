@@ -54,10 +54,58 @@ class ImageClassifier:
         if mime_type is None:
             mime_type = "application/octet-stream"
 
+        if mime_type == "application/pdf" or str(image_path).lower().endswith(".pdf"):
+            raise ValueError(
+                "PDF cannot be sent to a vision model; use extract_pdf_text / per-page OCR instead."
+            )
+
         with open(image_path, "rb") as image_file:
             base64_encoded_data = base64.b64encode(image_file.read()).decode("utf-8")
 
         return f"data:{mime_type};base64,{base64_encoded_data}"
+
+    def _extract_pdf_text(self, image_path: str) -> str:
+        """Extract text from a PDF: embedded text first, scanned pages via local OCR."""
+        text = ""
+        try:
+            from utils.pdf_extract import extract_pdf_text
+            text, _ = extract_pdf_text(image_path, 50)
+            text = (text or "").strip()
+        except Exception as e:
+            print(f"[ImageAnalyzer] extract_pdf_text failed: {e}")
+
+        if len(text) >= 20:
+            return text
+
+        # Scanned/image-only PDF: rasterize pages and OCR each page locally.
+        page_texts = []
+        try:
+            import tempfile
+            from utils.pdf_extract import rasterize_pdf_pages
+            pages = rasterize_pdf_pages(image_path, max_pages=5)
+            for i, page_bytes in enumerate(pages):
+                tmp_path = None
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                        tmp.write(page_bytes)
+                        tmp_path = tmp.name
+                    p_text = self._ocr_image(tmp_path)
+                    if p_text:
+                        page_texts.append(f"--- Page {i+1} ---\n{p_text}")
+                except Exception as ocr_err:
+                    print(f"[ImageAnalyzer] PDF page OCR failed (page {i+1}): {ocr_err}")
+                finally:
+                    if tmp_path and os.path.exists(tmp_path):
+                        try:
+                            os.remove(tmp_path)
+                        except Exception:
+                            pass
+            if page_texts:
+                text = "\n\n".join(page_texts)
+        except Exception as raster_err:
+            print(f"[ImageAnalyzer] PDF rasterize failed: {raster_err}")
+
+        return text
 
     def _ocr_image(self, image_path: str) -> str:
         """Run RapidOCR to extract text from a lab report / document.
@@ -101,8 +149,10 @@ class ImageClassifier:
         """Classify the image as medical/non-medical and determine its type."""
         print(f"[ImageAnalyzer] Classifying image: {image_path}")
 
-        # Try fast OCR first
-        ocr_text = self._ocr_image(image_path)
+        is_pdf_input = str(image_path).lower().endswith(".pdf")
+
+        # Try fast OCR first (PDFs: embedded text / rasterized-page OCR)
+        ocr_text = self._extract_pdf_text(image_path) if is_pdf_input else self._ocr_image(image_path)
         if self.ocr_text_model is not None and len(ocr_text.strip()) >= 15:
             print(f"[ImageAnalyzer] Classifying via OCR text ({len(ocr_text.strip())} chars)")
             try:
@@ -111,7 +161,8 @@ class ImageClassifier:
                 print(f"[ImageAnalyzer] OCR text classification failed: {ce}")
 
         # If no readable text or classification failed, use vision model if available
-        if _has_vision_key():
+        # (never for PDFs — vision models reject raw PDF input)
+        if not is_pdf_input and _has_vision_key():
             try:
                 print("[ImageAnalyzer] Classifying via vision model")
                 return self._classify_from_vision(image_path)
@@ -185,8 +236,13 @@ class ImageClassifier:
         """
         print(f"[ImageAnalyzer] Extracting medical information from: {image_path}")
 
-        ocr_text = self._ocr_image(image_path)
-        print(f"[ImageAnalyzer] OCR extracted {len(ocr_text.strip())} chars")
+        is_pdf_input = str(image_path).lower().endswith(".pdf")
+        if is_pdf_input:
+            ocr_text = self._extract_pdf_text(image_path)
+            print(f"[ImageAnalyzer] PDF text extracted {len(ocr_text.strip())} chars")
+        else:
+            ocr_text = self._ocr_image(image_path)
+            print(f"[ImageAnalyzer] OCR extracted {len(ocr_text.strip())} chars")
 
         if len(ocr_text.strip()) >= 20 and self.ocr_text_model is not None:
             try:
@@ -195,7 +251,8 @@ class ImageClassifier:
                 print(f"[ImageAnalyzer] Groq OCR parsing failed: {ocr_parse_err}")
 
         # If image has minimal/no text (e.g. skin photo, X-ray) or OCR parse failed, try vision
-        if _has_vision_key():
+        # (never for PDFs — vision models reject raw PDF input)
+        if not is_pdf_input and _has_vision_key():
             try:
                 print("[ImageAnalyzer] Running vision model extraction")
                 return self._extract_from_vision(image_path, extra_context)
