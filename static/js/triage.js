@@ -738,6 +738,8 @@ function renderNote() {
   var followups = note.followup_questions || [];
   var html = '<div class="triage-risk-banner triage-risk-banner-' + note.risk + '"><div class="triage-risk-banner-head"><div class="triage-risk-ident"><span class="triage-risk-dot triage-risk-dot-' + note.risk + '"></span><div><div class="triage-risk-label triage-risk-label-' + note.risk + '">' + esc(rm.label) + '</div><div class="triage-risk-priority">Priority based on intake signals · advisory only</div></div></div><div class="triage-risk-score"><div class="triage-risk-score-num">' + note.score + '</div><div class="triage-risk-score-label">Risk score</div></div></div><div class="triage-risk-rationale">' + esc(note.rationale || rm.label + ' · non-diagnostic advisory') + '</div></div>';
   html += '<div class="triage-queue-title" style="margin:2px 0 8px;">';
+  if (!note.fallback) html += '<span class="triage-badge" title="Summarized by the AI pipeline (Groq &rarr; OpenRouter &rarr; Cloudflare &rarr; Gemini) with automatic provider fallback"><i class="fas fa-wand-magic-sparkles me-1"></i>' + esc(t('note.aiBadge')) + '</span> ';
+  else if (note.fallback === 'demo') html += '<span class="triage-badge" title="Demo scenario"><i class="fas fa-flask me-1"></i>Demo</span> ';
   if (missing.length) html += '<span class="triage-badge triage-badge-missing"><i class="fas fa-circle-question me-1"></i>' + esc(t('queue.missing')) + ' · ' + missing.length + '</span> ';
   if (followups.length) html += '<span class="triage-badge triage-badge-followup"><i class="fas fa-comments me-1"></i>' + esc(t('queue.followups')) + ' · ' + followups.length + '</span>';
   html += '</div>';
