@@ -258,6 +258,17 @@
 .triage-file-block { border: 1px dashed var(--line); border-radius: var(--r-xs); padding: 9px 10px 10px; margin-bottom: 12px; }
 @keyframes triage-block-flash { 0% { box-shadow: 0 0 0 2px rgba(52,211,153,.95); } 100% { box-shadow: 0 0 0 2px rgba(52,211,153,0); } }
 .triage-file-block.is-new { animation: triage-block-flash 1.7s ease-out 1; border-style: solid; border-color: #34d399; }
+.triage-finding-card-flags { overflow: hidden; }
+.triage-flags-icon { color: var(--danger); font-size: 11px; }
+.triage-flag-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px; margin-top: 7px; }
+.triage-flag-item {
+  display: inline-flex; max-width: 100%;
+  padding: 5px 10px; border-radius: 8px;
+  font-size: 11.5px; font-weight: 600; line-height: 1.45;
+  text-transform: none; letter-spacing: 0; text-align: left;
+  color: var(--danger); background: rgba(220,38,38,.09); border: 1px solid rgba(220,38,38,.30);
+  overflow-wrap: anywhere; word-break: break-word;
+}
 .triage-file-block-head { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; color: var(--ink-dim); margin-bottom: 8px; }
 .triage-file-block .triage-finding-card { margin-bottom: 6px; }
 .triage-file-block .triage-finding-card:last-child { margin-bottom: 0; }

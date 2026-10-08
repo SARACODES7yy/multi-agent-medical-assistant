@@ -503,7 +503,7 @@ function processFile(file, rec) {
     var html = '<div class="triage-file-block" data-file="' + esc(file.name) + '">' +
       '<div class="triage-file-block-head"><i class="fas fa-file-medical"></i>' + esc(docTypeLabel) +
       '<span class="triage-finding-src">' + esc(file.name) + '</span></div>';
-    if (parsed.meta.abnormalFlags && parsed.meta.abnormalFlags.length) html += '<div class="triage-finding-card"><div class="triage-finding-test">Abnormal Flags' + srcTag + '</div><div class="triage-finding-value">' + parsed.meta.abnormalFlags.map(function(f) { return '<span class="triage-flag-pill triage-flag-critical">' + esc(f) + '</span>'; }).join(' ') + '</div></div>';
+    if (parsed.meta.abnormalFlags && parsed.meta.abnormalFlags.length) html += '<div class="triage-finding-card triage-finding-card-flags"><div class="triage-finding-test"><i class="fas fa-triangle-exclamation triage-flags-icon"></i> Abnormal Flags' + srcTag + '</div><div class="triage-flag-row">' + parsed.meta.abnormalFlags.map(function(f) { return '<span class="triage-flag-item">' + esc(f) + '</span>'; }).join('') + '</div></div>';
     tests.forEach(function(t) { html += '<div class="triage-finding-card"><div class="triage-finding-test">' + esc(t.name) + '</div><div class="triage-finding-value">' + esc(String(t.value)) + ' ' + esc(t.unit) + ' <span class="triage-flag-pill triage-flag-' + esc(t.flag) + '">' + esc(t.flag) + '</span></div></div>'; });
     if (parsed.meta.summary) html += '<div class="triage-finding-card"><div class="triage-finding-test">AI Summary' + srcTag + '</div><div class="triage-finding-value" style="white-space:pre-wrap;">' + esc(parsed.meta.summary) + '</div></div>';
     if (parsed.meta.clinicalInsight) html += '<div class="triage-finding-card"><div class="triage-finding-test">Clinical Insight' + srcTag + '</div><div class="triage-finding-value" style="white-space:pre-wrap;">' + esc(parsed.meta.clinicalInsight) + '</div></div>';
@@ -522,10 +522,12 @@ function processFile(file, rec) {
         if (lastBlk.scrollIntoView) { try { lastBlk.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) { lastBlk.scrollIntoView(); } }
       }
     }
-    rec.status = 'done'; rec.progress = 100; rec.testCount = tests.length;
-    addAudit('ocr', 'OCR processed ' + file.name + ' — ' + tests.length + ' findings extracted.');
+    var flagCount = (parsed.meta.abnormalFlags || []).length;
+    var findingCount = tests.length + flagCount;
+    rec.status = 'done'; rec.progress = 100; rec.testCount = findingCount;
+    addAudit('ocr', 'OCR processed ' + file.name + ' — ' + findingCount + ' findings extracted.');
     renderFileQueue(); toggleGenerate();
-    showToast('<i class="fas fa-circle-check me-1"></i><strong>' + esc(file.name) + '</strong> processed — ' + tests.length + ' findings added below');
+    showToast('<i class="fas fa-circle-check me-1"></i><strong>' + esc(file.name) + '</strong> processed — ' + findingCount + ' findings added below');
   });
   xhr.addEventListener('error', function() {
     rec.status = 'error'; rec.error = 'Network error during upload.';

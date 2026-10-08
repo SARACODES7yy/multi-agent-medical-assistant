@@ -188,7 +188,7 @@ templates = Jinja2Templates(directory="templates")
 
 # Frontend build marker — bump whenever triage.js changes so a stale browser tab
 # can detect it is out of date (GET /version + checkAppVersion() in triage.js).
-TRIAGE_JS_VERSION = "14"
+TRIAGE_JS_VERSION = "15"
 
 @app.get("/version")
 def app_version():
