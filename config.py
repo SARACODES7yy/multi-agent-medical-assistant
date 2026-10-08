@@ -154,18 +154,120 @@ def cloudflare_llm(temperature=0.1, **kw):
     return inner.with_retry(retry_if_exception_type=(Exception,), stop_after_attempt=2)
 
 
-def llm(temperature=0.1, **kw):
-    """Primary text LLM. Groq (text-only, works with OCR text) → OpenRouter → Cloudflare → Gemini."""
-    if _GROQ_AVAILABLE and GROQ_API_KEY:
-        return groq_llm(temperature=temperature, **kw)
-    if OPENROUTER_API_KEY and _OPENROUTER_AVAILABLE:
-        return openrouter_llm(temperature=temperature, **kw)
-    if CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID:
+# ----------------------------------------------------------------------
+# Runtime multi-provider fallback chain
+# ----------------------------------------------------------------------
+from typing import Any, List, Optional  # noqa: E402
+
+from langchain_core.callbacks import CallbackManagerForLLMRun  # noqa: E402
+from langchain_core.language_models.chat_models import BaseChatModel  # noqa: E402
+from langchain_core.messages import AIMessage, BaseMessage  # noqa: E402
+from langchain_core.outputs import ChatGeneration, ChatResult  # noqa: E402
+from pydantic import Field  # noqa: E402
+
+
+class FallbackChatModel(BaseChatModel):
+    """Chat model that tries each underlying provider in order until one succeeds.
+
+    Used so a Groq outage/rate-limit transparently fails over to OpenRouter,
+    then Cloudflare, then Gemini (order configurable via env), instead of
+    surfacing an error to the user.
+    """
+
+    models: List[Any] = Field(default_factory=list)
+    provider_names: List[str] = Field(default_factory=list)
+
+    @property
+    def _llm_type(self) -> str:
+        return "fallback"
+
+    def _generate(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        last_err: Optional[Exception] = None
+        for name, model in zip(self.provider_names, self.models):
+            try:
+                out = model.invoke(messages, stop=stop) if stop else model.invoke(messages)
+                if not isinstance(out, AIMessage):
+                    out = AIMessage(content=str(getattr(out, "content", out)))
+                return ChatResult(generations=[ChatGeneration(message=out)])
+            except Exception as e:  # provider failed -> try the next one
+                last_err = e
+                print(f"[FallbackLLM] {name} failed -> next provider: {e}")
+        raise RuntimeError(
+            f"All LLM providers failed ({' -> '.join(self.provider_names)}): {last_err}"
+        )
+
+
+def _provider_registry():
+    """name -> (availability_check, factory(temperature, **kw) -> chat model)."""
+    return {
+        "groq": (
+            lambda: _GROQ_AVAILABLE and bool(GROQ_API_KEY),
+            lambda temperature=0.1, **kw: groq_llm(temperature=temperature, **kw),
+        ),
+        "openrouter": (
+            lambda: _OPENROUTER_AVAILABLE and bool(OPENROUTER_API_KEY),
+            lambda temperature=0.1, **kw: openrouter_llm(temperature=temperature, **kw),
+        ),
+        "cloudflare": (
+            lambda: bool(CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID),
+            lambda temperature=0.1, **kw: cloudflare_llm(temperature=temperature, **kw),
+        ),
+        "gemini": (
+            lambda: bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")),
+            lambda temperature=0.1, **kw: gemini_llm(temperature=temperature, **kw),
+        ),
+    }
+
+
+def _text_chain_order():
+    raw = os.getenv("TEXT_FALLBACK_PROVIDERS") or os.getenv("FALLBACK_PROVIDERS") or "groq,openrouter,cloudflare,gemini"
+    return [p.strip().lower() for p in raw.split(",") if p.strip()]
+
+
+def _build_provider_chain(order, temperature=0.1, **kw):
+    """Return [(name, factory)] for every provider in `order` that is configured."""
+    registry = _provider_registry()
+    chain = []
+    for name in order:
+        entry = registry.get(name)
+        if not entry:
+            print(f"[FallbackLLM] unknown provider '{name}' in fallback order — skipped")
+            continue
+        available, factory = entry
         try:
-            return cloudflare_llm(temperature=temperature, **kw)
-        except Exception:
-            pass
-    return gemini_llm(temperature=temperature, **kw)
+            if not available():
+                continue
+            # Validate construction now so a broken provider never lands in the chain.
+            factory(temperature=temperature, **kw)
+            chain.append((name, factory))
+        except Exception as e:
+            print(f"[FallbackLLM] provider '{name}' unavailable ({e}) — skipped")
+    return chain
+
+
+def llm(temperature=0.1, **kw):
+    """Primary text LLM with a real runtime fallback chain.
+
+    Honors TEXT_FALLBACK_PROVIDERS / FALLBACK_PROVIDERS (comma-separated,
+    default "groq,openrouter,cloudflare,gemini"). On a per-request failure the
+    next available provider in the chain is tried; when none is left the last
+    error is raised.
+    """
+    chain = _build_provider_chain(_text_chain_order())
+    if not chain:
+        # No provider configured at all — preserve old behavior (Gemini last resort).
+        return gemini_llm(temperature=temperature, **kw)
+    models = [f(temperature=temperature, **kw) for _, f in chain]
+    names = [n for n, _ in chain]
+    fb = FallbackChatModel(models=models, provider_names=names)
+    print(f"[llm] provider chain: {' -> '.join(names)}")
+    return fb
 
 
 class RateLimitRetryLLM:
@@ -277,28 +379,21 @@ class MedicalImageConfig:
         self.ocr_llm = llm(temperature=0.1)
         # Vision needs a genuinely vision-capable model: prefer Gemini when a
         # Google key is configured (Groq's text-only models cannot read images).
-        _has_google_key = bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"))
-        candidates = []
-        if _has_google_key:
-            candidates.append(_vision_llm())
-        if OPENROUTER_API_KEY:
-            try:
-                candidates.append(openrouter_llm(temperature=0.1))
-            except Exception:
-                pass
-        if CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID:
-            try:
-                candidates.append(cloudflare_llm(temperature=0.1))
-            except Exception:
-                pass
-        if _GROQ_AVAILABLE and GROQ_API_KEY:
-            try:
-                candidates.append(groq_llm(temperature=0.1))
-            except Exception:
-                pass
-        if not candidates:
-            candidates.append(_vision_llm())
-        self.vision_llm = candidates[0]
+        # Runtime fallback order comes from VISION_FALLBACK_PROVIDERS.
+        vision_order = [
+            p.strip().lower()
+            for p in (os.getenv("VISION_FALLBACK_PROVIDERS") or "gemini,openrouter,cloudflare,groq").split(",")
+            if p.strip()
+        ]
+        vision_chain = _build_provider_chain(vision_order, temperature=0.1)
+        if vision_chain:
+            self.vision_llm = FallbackChatModel(
+                models=[f(temperature=0.1) for _, f in vision_chain],
+                provider_names=[n for n, _ in vision_chain],
+            )
+            print(f"[vision] provider chain: {' -> '.join(n for n, _ in vision_chain)}")
+        else:
+            self.vision_llm = _vision_llm()
         self.llm = self.ocr_llm
 
 
