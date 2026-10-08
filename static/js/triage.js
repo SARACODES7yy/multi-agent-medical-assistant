@@ -499,11 +499,15 @@ function processFile(file, rec) {
       if (!state.extractedTests.find(function(e) { return e.name === t.name && e.value === t.value; })) state.extractedTests.push(t);
     });
     var docTypeLabel = parsed.meta.documentType || 'Lab / Report';
-    var html = '<div class="triage-finding-card"><div class="triage-finding-test">' + esc(docTypeLabel) + ' <span class="triage-finding-src">from ' + esc(file.name) + '</span></div></div>';
-    if (parsed.meta.abnormalFlags && parsed.meta.abnormalFlags.length) html += '<div class="triage-finding-card"><div class="triage-finding-test">Abnormal Flags</div><div class="triage-finding-value">' + parsed.meta.abnormalFlags.map(function(f) { return '<span class="triage-flag-pill triage-flag-critical">' + esc(f) + '</span>'; }).join(' ') + '</div></div>';
+    var srcTag = ' <span class="triage-finding-src">from ' + esc(file.name) + '</span>';
+    var html = '<div class="triage-file-block" data-file="' + esc(file.name) + '">' +
+      '<div class="triage-file-block-head"><i class="fas fa-file-medical"></i>' + esc(docTypeLabel) +
+      '<span class="triage-finding-src">' + esc(file.name) + '</span></div>';
+    if (parsed.meta.abnormalFlags && parsed.meta.abnormalFlags.length) html += '<div class="triage-finding-card"><div class="triage-finding-test">Abnormal Flags' + srcTag + '</div><div class="triage-finding-value">' + parsed.meta.abnormalFlags.map(function(f) { return '<span class="triage-flag-pill triage-flag-critical">' + esc(f) + '</span>'; }).join(' ') + '</div></div>';
     tests.forEach(function(t) { html += '<div class="triage-finding-card"><div class="triage-finding-test">' + esc(t.name) + '</div><div class="triage-finding-value">' + esc(String(t.value)) + ' ' + esc(t.unit) + ' <span class="triage-flag-pill triage-flag-' + esc(t.flag) + '">' + esc(t.flag) + '</span></div></div>'; });
-    if (parsed.meta.summary) html += '<div class="triage-finding-card"><div class="triage-finding-test">AI Summary</div><div class="triage-finding-value" style="white-space:pre-wrap;">' + esc(parsed.meta.summary) + '</div></div>';
-    if (parsed.meta.clinicalInsight) html += '<div class="triage-finding-card"><div class="triage-finding-test">Clinical Insight</div><div class="triage-finding-value" style="white-space:pre-wrap;">' + esc(parsed.meta.clinicalInsight) + '</div></div>';
+    if (parsed.meta.summary) html += '<div class="triage-finding-card"><div class="triage-finding-test">AI Summary' + srcTag + '</div><div class="triage-finding-value" style="white-space:pre-wrap;">' + esc(parsed.meta.summary) + '</div></div>';
+    if (parsed.meta.clinicalInsight) html += '<div class="triage-finding-card"><div class="triage-finding-test">Clinical Insight' + srcTag + '</div><div class="triage-finding-value" style="white-space:pre-wrap;">' + esc(parsed.meta.clinicalInsight) + '</div></div>';
+    html += '</div>';
     var ex = $('#extracts');
     if (ex) {
       if (!ex.dataset.fileIndex) ex.dataset.fileIndex = '0';
@@ -511,6 +515,8 @@ function processFile(file, rec) {
       if (fi2 === 0 && !ex.dataset.init) { ex.innerHTML = ''; ex.dataset.init = '1'; }
       ex.insertAdjacentHTML('beforeend', html);
       ex.dataset.fileIndex = String(fi2 + 1);
+      var lastBlk = ex.lastElementChild;
+      if (lastBlk && lastBlk.scrollIntoView) { try { lastBlk.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) { lastBlk.scrollIntoView(); } }
     }
     rec.status = 'done'; rec.progress = 100; rec.testCount = tests.length;
     addAudit('ocr', 'OCR processed ' + file.name + ' — ' + tests.length + ' findings extracted.');
